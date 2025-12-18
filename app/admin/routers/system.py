@@ -8,11 +8,14 @@ from pydantic import BaseModel, Field
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from app.auth.models import (
     CustomUser,
     ClergyDistrict,
     UnitName,
     UnitRegistrationData,
+    UnitMembers,
     UserType,
 )
 
@@ -49,6 +52,82 @@ class RegisteredUserCreate(BaseModel):
     unit_name_id: int = Field(..., gt=0)
     phone_number: str = Field(..., min_length=1, max_length=20)
     password: str = Field(..., min_length=1)
+
+
+# District-wise Data Endpoint
+@router.get("/district-wise-data", response_model=List[dict])
+async def get_district_wise_data(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get district-wise summary data including units and members count."""
+    # Get all districts with their units
+    stmt = select(ClergyDistrict).options(selectinload(ClergyDistrict.units))
+    result = await db.execute(stmt)
+    districts = list(result.scalars().all())
+    
+    district_data = []
+    
+    for district in districts:
+        # Get unit IDs for this district
+        unit_ids = [unit.id for unit in district.units]
+        
+        # Get registered units count
+        stmt = select(func.count()).select_from(CustomUser).where(
+            CustomUser.unit_name_id.in_(unit_ids),
+            CustomUser.user_type == UserType.UNIT
+        )
+        result = await db.execute(stmt)
+        registered_units = result.scalar() or 0
+        
+        # Get completed registrations count
+        stmt = select(func.count()).select_from(UnitRegistrationData).join(
+            CustomUser, UnitRegistrationData.registered_user_id == CustomUser.id
+        ).where(
+            CustomUser.unit_name_id.in_(unit_ids),
+            UnitRegistrationData.status == "Registration Completed"
+        )
+        result = await db.execute(stmt)
+        completed_units = result.scalar() or 0
+        
+        # Get total members count for this district
+        stmt = select(func.count()).select_from(UnitMembers).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).where(CustomUser.unit_name_id.in_(unit_ids))
+        result = await db.execute(stmt)
+        total_members = result.scalar() or 0
+        
+        # Get male/female counts
+        stmt = select(func.count()).select_from(UnitMembers).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).where(
+            CustomUser.unit_name_id.in_(unit_ids),
+            UnitMembers.gender == 'M'
+        )
+        result = await db.execute(stmt)
+        male_members = result.scalar() or 0
+        
+        stmt = select(func.count()).select_from(UnitMembers).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).where(
+            CustomUser.unit_name_id.in_(unit_ids),
+            UnitMembers.gender == 'F'
+        )
+        result = await db.execute(stmt)
+        female_members = result.scalar() or 0
+        
+        district_data.append({
+            "id": district.id,
+            "name": district.name,
+            "total_units": len(district.units),
+            "registered_units": registered_units,
+            "completed_units": completed_units,
+            "total_members": total_members,
+            "male_members": male_members,
+            "female_members": female_members,
+        })
+    
+    return district_data
 
 
 # District Endpoints

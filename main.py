@@ -36,6 +36,7 @@ app.include_router(conference_public.router, prefix="/api/conference/public", ta
 app.include_router(admin_units.router, prefix="/api/admin/units", tags=["admin-units"])
 app.include_router(admin_conference.router, prefix="/api/admin/conference", tags=["admin-conference"])
 app.include_router(admin_system.router, prefix="/api/admin/system", tags=["admin-system"])
+app.include_router(admin_system.router, prefix="/api/admin", tags=["admin-system-alias"])
 app.include_router(admin_site.router, prefix="/api", tags=["site-settings"])
 app.include_router(kalamela_public.router, prefix="/api/kalamela", tags=["kalamela-public"])
 app.include_router(kalamela_official.router, prefix="/api/kalamela/official", tags=["kalamela-official"])
