@@ -200,15 +200,53 @@ async def view_unit_details(
     result = await db.execute(stmt)
     members = list(result.scalars().all())
     
+    # Convert officials to dict
+    officials_dict = None
+    if officials:
+        officials_dict = {
+            "id": officials.id,
+            "president_designation": officials.president_designation,
+            "president_name": officials.president_name,
+            "president_phone": officials.president_phone,
+            "vice_president_name": officials.vice_president_name,
+            "vice_president_phone": officials.vice_president_phone,
+            "secretary_name": officials.secretary_name,
+            "secretary_phone": officials.secretary_phone,
+            "joint_secretary_name": officials.joint_secretary_name,
+            "joint_secretary_phone": officials.joint_secretary_phone,
+            "treasurer_name": officials.treasurer_name,
+            "treasurer_phone": officials.treasurer_phone,
+        }
+    
+    # Convert councilors to list of dicts
+    councilors_list = [
+        {"id": c.id, "unit_member_id": c.unit_member_id}
+        for c in councilors
+    ]
+    
+    # Convert members to list of dicts
+    members_list = [
+        {
+            "id": m.id,
+            "name": m.name,
+            "gender": m.gender,
+            "dob": m.dob.isoformat() if m.dob else None,
+            "number": m.number,
+            "qualification": m.qualification,
+            "blood_group": m.blood_group,
+        }
+        for m in members
+    ]
+    
     return {
         "user": {
             "id": user.id,
             "username": user.username,
             "unit_name": user.unit_name.name if user.unit_name else None,
         },
-        "officials": officials,
-        "councilors": councilors,
-        "members": members,
+        "officials": officials_dict,
+        "councilors": councilors_list,
+        "members": members_list,
         "member_count": len(members),
     }
 
