@@ -472,8 +472,9 @@ async def create_conference_payment(
         conference_id=conference_id,
         amount_to_pay=amount,
         uploaded_by_id=user_id,
-        proof=data.proof,
-        status=data.status.value if data.proof else "NOT PAID",
+        proof_path=data.proof_path,
+        payment_reference=data.payment_reference,
+        status=data.status.value if data.proof_path else "NOT PAID",
     )
     
     db.add(payment)
@@ -738,7 +739,8 @@ async def get_payment_info(
                     'uploaded_by': official.first_name,
                     'date': payment.date,
                     'status': payment.status,
-                    'proof': payment.proof,
+                    'proof_path': payment.proof_path,
+                    'payment_reference': payment.payment_reference,
                 })
         
         # Add member if present

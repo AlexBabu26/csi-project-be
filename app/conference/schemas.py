@@ -108,7 +108,8 @@ class ConferencePaymentBase(BaseModel):
 class ConferencePaymentCreate(ConferencePaymentBase):
     """Create schema for conference payments."""
     
-    proof: Optional[str] = Field(None, description="File path to payment proof")
+    proof_path: Optional[str] = Field(None, description="File path to payment proof")
+    payment_reference: Optional[str] = Field(None, description="Payment reference number")
     status: PaymentStatus = Field(default=PaymentStatus.PENDING)
 
 
@@ -119,7 +120,8 @@ class ConferencePaymentResponse(ConferencePaymentBase):
     
     id: int
     uploaded_by_id: Optional[int]
-    proof: Optional[str]
+    proof_path: Optional[str]
+    payment_reference: Optional[str]
     date: datetime
     status: Optional[str]
 

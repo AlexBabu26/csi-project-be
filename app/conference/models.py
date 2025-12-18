@@ -66,9 +66,10 @@ class ConferencePayment(Base):
     uploaded_by_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("custom_user.id"), nullable=True, index=True
     )
-    proof: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # File path
+    proof_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # File path
     date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # PAID, NOT PAID, PENDING
+    payment_reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 
 class FoodPreference(Base):
