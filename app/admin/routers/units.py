@@ -373,6 +373,35 @@ async def list_all_unit_officials(
     ]
 
 
+# Unit Councilors Endpoint
+@router.get("/councilors", response_model=List[dict])
+async def list_all_unit_councilors(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all unit councilors across all units."""
+    stmt = select(UnitCouncilor).options(
+        selectinload(UnitCouncilor.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+        selectinload(UnitCouncilor.unit_member)
+    )
+    result = await db.execute(stmt)
+    councilors_list = list(result.scalars().all())
+    
+    return [
+        {
+            "id": councilor.id,
+            "registered_user_id": councilor.registered_user_id,
+            "unit_name": councilor.registered_user.unit_name.name if councilor.registered_user and councilor.registered_user.unit_name else None,
+            "district": councilor.registered_user.unit_name.district.name if councilor.registered_user and councilor.registered_user.unit_name and councilor.registered_user.unit_name.district else None,
+            "unit_member_id": councilor.unit_member_id,
+            "member_name": councilor.unit_member.name if councilor.unit_member else None,
+            "member_gender": councilor.unit_member.gender if councilor.unit_member else None,
+            "member_phone": councilor.unit_member.number if councilor.unit_member else None,
+        }
+        for councilor in councilors_list
+    ]
+
+
 # Member Management
 @router.delete("/members/{member_id}", response_model=dict)
 async def archive_member(
