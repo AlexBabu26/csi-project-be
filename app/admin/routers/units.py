@@ -25,6 +25,7 @@ from app.units.models import (
     UnitOfficialsChangeRequest,
     UnitCouncilorChangeRequest,
     UnitMemberAddRequest,
+    ArchivedUnitMember,
     RequestStatus,
 )
 from app.units.schemas import (
@@ -430,6 +431,34 @@ async def list_all_unit_members(
             "blood_group": member.blood_group,
         }
         for member in members_list
+    ]
+
+
+# Archived Unit Members Endpoint
+@router.get("/archived-members", response_model=List[dict])
+async def list_all_archived_members(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all archived unit members across all units."""
+    stmt = select(ArchivedUnitMember).order_by(ArchivedUnitMember.archived_at.desc())
+    result = await db.execute(stmt)
+    archived_list = list(result.scalars().all())
+    
+    return [
+        {
+            "id": member.id,
+            "registered_user_id": member.registered_user_id,
+            "name": member.name,
+            "gender": member.gender,
+            "dob": member.dob.isoformat() if member.dob else None,
+            "age": member.age,
+            "number": member.number,
+            "qualification": member.qualification,
+            "blood_group": member.blood_group,
+            "archived_at": member.archived_at.isoformat() if member.archived_at else None,
+        }
+        for member in archived_list
     ]
 
 
