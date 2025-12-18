@@ -346,7 +346,7 @@ async def list_all_unit_officials(
 ):
     """List all unit officials across all units."""
     stmt = select(UnitOfficials).options(
-        selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name)
+        selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
     )
     result = await db.execute(stmt)
     officials_list = list(result.scalars().all())
