@@ -102,6 +102,9 @@ class UnitTransferRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+    
+    # Relationships
+    unit_member = relationship("UnitMembers", foreign_keys=[unit_member_id])
 
 
 class UnitMemberChangeRequest(Base):

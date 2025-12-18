@@ -1100,9 +1100,11 @@ async def get_transfer_requests(
     db: AsyncSession,
     user_id: Optional[int] = None,
     status_filter: Optional[RequestStatus] = None,
-) -> List[UnitTransferRequest]:
+) -> List[Dict[str, Any]]:
     """Get list of transfer requests, optionally filtered."""
-    stmt = select(UnitTransferRequest)
+    stmt = select(UnitTransferRequest).options(
+        selectinload(UnitTransferRequest.unit_member)
+    )
     
     if user_id:
         stmt = stmt.where(UnitTransferRequest.original_registered_user_id == user_id)
@@ -1112,7 +1114,43 @@ async def get_transfer_requests(
     stmt = stmt.order_by(UnitTransferRequest.created_at.desc())
     
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    requests = list(result.scalars().all())
+    
+    # Get unit names for current and destination units
+    unit_ids = set()
+    for req in requests:
+        if req.current_unit_id:
+            unit_ids.add(req.current_unit_id)
+        if req.destination_unit_id:
+            unit_ids.add(req.destination_unit_id)
+    
+    # Fetch unit names
+    unit_names = {}
+    if unit_ids:
+        stmt = select(UnitName).where(UnitName.id.in_(unit_ids))
+        result = await db.execute(stmt)
+        for unit in result.scalars().all():
+            unit_names[unit.id] = unit.name
+    
+    # Build response with additional fields
+    return [
+        {
+            "id": req.id,
+            "unit_member_id": req.unit_member_id,
+            "destination_unit_id": req.destination_unit_id,
+            "reason": req.reason,
+            "current_unit_id": req.current_unit_id,
+            "original_registered_user_id": req.original_registered_user_id,
+            "proof": req.proof,
+            "status": req.status,
+            "created_at": req.created_at,
+            "updated_at": req.updated_at,
+            "member_name": req.unit_member.name if req.unit_member else None,
+            "current_unit_name": unit_names.get(req.current_unit_id) if req.current_unit_id else None,
+            "destination_unit_name": unit_names.get(req.destination_unit_id) if req.destination_unit_id else None,
+        }
+        for req in requests
+    ]
 
 
 async def get_member_change_requests(

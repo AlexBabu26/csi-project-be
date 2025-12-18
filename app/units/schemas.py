@@ -112,6 +112,10 @@ class UnitTransferRequestResponse(BaseModel):
     status: RequestStatus
     created_at: datetime
     updated_at: datetime
+    # Additional fields for frontend
+    member_name: Optional[str] = None
+    current_unit_name: Optional[str] = None
+    destination_unit_name: Optional[str] = None
 
 
 # Unit Member Change Request Schemas
