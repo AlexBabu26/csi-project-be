@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import CustomUser, UserType, UnitMembers, ClergyDistrict
 from app.conference.models import Conference, ConferenceDelegate
@@ -37,7 +37,7 @@ async def get_admin_user(
 @router.get("/home", response_model=List[ConferenceResponse])
 async def conference_home(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get conference dashboard with list of conferences."""
     stmt = select(Conference)
@@ -49,7 +49,7 @@ async def conference_home(
 async def create_conference(
     data: ConferenceCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a new conference."""
     return await conference_service.create_conference(db, data)
@@ -60,7 +60,7 @@ async def update_conference(
     conference_id: int,
     data: ConferenceUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update a conference."""
     return await conference_service.update_conference(db, conference_id, data)
@@ -70,7 +70,7 @@ async def update_conference(
 async def delete_conference(
     conference_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a conference."""
     await conference_service.delete_conference(db, conference_id)
@@ -81,7 +81,7 @@ async def delete_conference(
 async def get_conference_info(
     conference_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get all conference information aggregated by district."""
     district_info = await conference_service.get_all_conference_info(db, conference_id)
@@ -95,7 +95,7 @@ async def get_conference_info(
 async def export_conference_info(
     conference_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export conference information to Excel (placeholder)."""
     district_info = await conference_service.get_all_conference_info(db, conference_id)
@@ -110,7 +110,7 @@ async def export_conference_info(
 async def get_payment_info(
     conference_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get payment information aggregated by district."""
     payment_info = await conference_service.get_payment_info(db, conference_id)
@@ -124,7 +124,7 @@ async def get_payment_info(
 async def export_payment_info(
     conference_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export payment information to Excel (placeholder)."""
     payment_info = await conference_service.get_payment_info(db, conference_id)
@@ -138,7 +138,7 @@ async def export_payment_info(
 @router.get("/officials", response_model=List[dict])
 async def list_district_officials(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all district officials."""
     stmt = select(CustomUser).where(
@@ -165,7 +165,7 @@ async def list_district_officials(
 async def add_district_official(
     data: DistrictOfficialCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add a district official (create delegate account)."""
     official = await conference_service.add_conference_delegate_official(
@@ -183,7 +183,7 @@ async def update_district_official(
     official_id: int,
     data: DistrictOfficialUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update district official and propagate counts to all district users."""
     official = await conference_service.update_district_official(
@@ -202,7 +202,7 @@ async def update_district_official(
 async def delete_district_official(
     official_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a district official."""
     await conference_service.delete_district_official(db, official_id)
@@ -214,7 +214,7 @@ async def view_district_members(
     conference_id: int,
     district_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all members from a district for conference registration."""
     # Get members from the district

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
-from app.common.db import get_db
+from app.common.db import get_db, get_async_db
 from app.auth.schemas import TokenPayload
 
 # pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -199,7 +199,7 @@ def get_current_payload(token: str = Depends(oauth2_scheme)) -> TokenPayload:
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get current user from access token (async version).
@@ -209,7 +209,7 @@ async def get_current_user(
     
     Args:
         token: JWT token from Authorization header
-        db: Database session
+        db: Async database session
     
     Returns:
         CustomUser object

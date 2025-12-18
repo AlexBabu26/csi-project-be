@@ -8,7 +8,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import CustomUser, UnitMembers, UnitName, ClergyDistrict, UserType
 from app.kalamela.models import (
@@ -65,7 +65,7 @@ async def get_admin_user(
 @router.get("/home", response_model=dict)
 async def admin_home(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Admin dashboard with all events."""
     stmt_ind = select(IndividualEvent).order_by(IndividualEvent.name)
@@ -86,7 +86,7 @@ async def admin_home(
 @router.get("/units", response_model=List[dict])
 async def list_all_units(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all units with district information."""
     stmt = select(UnitName).options(
@@ -110,7 +110,7 @@ async def list_all_units(
 async def view_unit_members(
     unit_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all members of a unit with ages."""
     # Get unit
@@ -171,7 +171,7 @@ async def edit_member(
     qualification: Optional[str] = None,
     blood_group: Optional[str] = None,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Edit unit member details."""
     stmt = select(UnitMembers).where(UnitMembers.id == member_id)
@@ -205,7 +205,7 @@ async def edit_member(
 async def exclude_member_endpoint(
     member_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Exclude a member from all events."""
     await kalamela_service.exclude_member(db, member_id)
@@ -215,7 +215,7 @@ async def exclude_member_endpoint(
 @router.get("/excluded-members", response_model=List[dict])
 async def list_excluded_members(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all excluded members."""
     stmt = select(KalamelaExcludeMembers).options(
@@ -238,7 +238,7 @@ async def list_excluded_members(
 async def remove_from_exclusion(
     exclusion_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Remove member from exclusion list."""
     await kalamela_service.remove_exclusion(db, exclusion_id)
@@ -250,7 +250,7 @@ async def remove_from_exclusion(
 async def create_individual_event(
     data: IndividualEventCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create individual event."""
     event = IndividualEvent(
@@ -270,7 +270,7 @@ async def update_individual_event(
     event_id: int,
     data: IndividualEventUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update individual event."""
     stmt = select(IndividualEvent).where(IndividualEvent.id == event_id)
@@ -300,7 +300,7 @@ async def update_individual_event(
 async def create_group_event(
     data: GroupEventCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create group event."""
     event = GroupEvent(
@@ -322,7 +322,7 @@ async def update_group_event(
     event_id: int,
     data: GroupEventUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update group event."""
     stmt = select(GroupEvent).where(GroupEvent.id == event_id)
@@ -356,7 +356,7 @@ async def update_group_event(
 @router.get("/participants/individual", response_model=dict)
 async def list_individual_participants(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all individual participants grouped by event."""
     return await kalamela_service.view_all_individual_participants(db)
@@ -365,7 +365,7 @@ async def list_individual_participants(
 @router.get("/participants/group", response_model=dict)
 async def list_group_participants(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all group participants grouped by event and team."""
     return await kalamela_service.view_all_group_participants(db)
@@ -376,7 +376,7 @@ async def update_chest_number(
     participation_id: int,
     data: ChestNumberUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update chest number for group participation."""
     stmt = select(GroupEventParticipation).where(
@@ -402,7 +402,7 @@ async def update_chest_number(
 async def view_events_preview(
     district_id: Optional[int] = None,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     View events preview with participation counts and payment info.
@@ -483,7 +483,7 @@ async def view_events_preview(
 @router.get("/payments", response_model=List[KalamelaPaymentResponse])
 async def list_all_payments(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all payments."""
     stmt = select(KalamelaPayments).order_by(KalamelaPayments.created_on.desc())
@@ -495,7 +495,7 @@ async def list_all_payments(
 async def approve_payment(
     payment_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve payment."""
     await kalamela_service.update_payment_status(db, payment_id, PaymentStatus.PAID)
@@ -506,7 +506,7 @@ async def approve_payment(
 async def decline_payment(
     payment_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Decline payment and clear proof."""
     stmt = select(KalamelaPayments).where(KalamelaPayments.id == payment_id)
@@ -532,7 +532,7 @@ async def decline_payment(
 async def get_individual_candidates(
     event_name: str,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get candidates for scoring by event name."""
     stmt = select(IndividualEventParticipation).join(
@@ -560,7 +560,7 @@ async def get_individual_candidates(
 async def add_individual_scores(
     data: IndividualScoreBulkCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Bulk add individual scores."""
     scores = await kalamela_service.add_individual_scores_bulk(db, data)
@@ -571,7 +571,7 @@ async def add_individual_scores(
 async def get_group_candidates(
     event_name: str,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get team candidates for scoring by event name."""
     stmt = select(
@@ -597,7 +597,7 @@ async def get_group_candidates(
 async def add_group_scores(
     data: GroupScoreBulkCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Bulk add group scores."""
     scores = await kalamela_service.add_group_scores_bulk(db, data)
@@ -607,7 +607,7 @@ async def add_group_scores(
 @router.get("/scores/individual", response_model=dict)
 async def view_individual_scores(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all individual scores grouped by event."""
     # Get all distinct events that have scores
@@ -646,7 +646,7 @@ async def view_individual_scores(
 @router.get("/scores/group", response_model=dict)
 async def view_group_scores(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all group scores grouped by event."""
     # Get all distinct events
@@ -673,7 +673,7 @@ async def view_group_scores(
 async def update_individual_scores(
     data: IndividualScoreBulkUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Bulk update individual scores."""
     scores = await kalamela_service.update_individual_scores_bulk(db, data)
@@ -684,7 +684,7 @@ async def update_individual_scores(
 async def update_group_scores(
     data: GroupScoreBulkUpdate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Bulk update group scores."""
     scores = await kalamela_service.update_group_scores_bulk(db, data)
@@ -695,7 +695,7 @@ async def update_group_scores(
 async def get_scores_for_event(
     event_name: str,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get all scores for a specific individual event for editing."""
     stmt = select(IndividualEventScoreCard).join(
@@ -721,7 +721,7 @@ async def get_scores_for_event(
 async def get_group_scores_for_event(
     event_name: str,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get all scores for a specific group event for editing."""
     stmt = select(GroupEventScoreCard).where(
@@ -740,7 +740,7 @@ async def get_group_scores_for_event(
 @router.get("/appeals", response_model=List[dict])
 async def list_all_appeals(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all appeals with payment status."""
     stmt = select(AppealPayments).options(
@@ -772,7 +772,7 @@ async def reply_to_appeal(
     appeal_id: int,
     data: AppealReply,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Reply to appeal and approve it."""
     appeal = await kalamela_service.reply_to_appeal(db, appeal_id, data.reply)
@@ -783,7 +783,7 @@ async def reply_to_appeal(
 @router.get("/results/unit-wise", response_model=dict)
 async def get_unit_wise_results(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get top 3 results per unit."""
     stmt = select(UnitName).order_by(UnitName.name)
@@ -813,7 +813,7 @@ async def get_unit_wise_results(
 @router.get("/results/district-wise", response_model=dict)
 async def get_district_wise_results(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get top 3 results per district with aggregated points."""
     stmt = select(ClergyDistrict).order_by(ClergyDistrict.name)
@@ -853,7 +853,7 @@ async def get_district_wise_results(
 async def export_events_data(
     filters: EventFilterSchema,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export call sheet with full formatting."""
     from app.common.exporter import export_kalamela_call_sheet
@@ -890,7 +890,7 @@ async def export_events_data(
 @router.post("/export/chest-numbers")
 async def export_chest_numbers(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export all individual chest numbers."""
     from app.common.exporter import export_kalamela_chest_numbers
@@ -912,7 +912,7 @@ async def export_chest_numbers(
 @router.post("/export/results")
 async def export_results(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export top 3 results for all events."""
     from app.common.exporter import export_kalamela_results

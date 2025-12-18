@@ -6,7 +6,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import CustomUser, UnitMembers, UnitName, UserType
 from app.kalamela.models import (
@@ -44,7 +44,7 @@ async def get_official_user(
 @router.get("/home", response_model=dict)
 async def official_home(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Official home page showing:
@@ -69,7 +69,7 @@ async def official_home(
 async def select_individual_event(
     data: SelectEventSchema,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Select individual event and show eligible members.
@@ -125,7 +125,7 @@ async def select_individual_event(
 async def add_individual_participant(
     data: IndividualParticipationCreate,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add participant to individual event."""
     participation = await kalamela_service.add_individual_participant(
@@ -141,7 +141,7 @@ async def add_individual_participant(
 @router.get("/participants/individual", response_model=dict)
 async def view_district_individual_participants(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all individual participants from this district grouped by event."""
     participation_dict = await kalamela_service.view_all_individual_participants(
@@ -157,7 +157,7 @@ async def view_district_individual_participants(
 async def remove_individual_participation(
     participation_id: int,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Remove individual participant."""
     # Verify participation belongs to this district
@@ -189,7 +189,7 @@ async def remove_individual_participation(
 async def select_group_event(
     data: SelectEventSchema,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Select group event and unit, show eligible members.
@@ -256,7 +256,7 @@ async def select_group_event(
 async def add_group_participants(
     data: GroupParticipationCreate,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add multiple participants to group event (team formation)."""
     participations = await kalamela_service.add_group_participants(
@@ -272,7 +272,7 @@ async def add_group_participants(
 @router.get("/participants/group", response_model=dict)
 async def view_district_group_participants(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all group participants from this district grouped by event and team."""
     participation_dict = await kalamela_service.view_all_group_participants(
@@ -288,7 +288,7 @@ async def view_district_group_participants(
 async def remove_group_participation(
     participation_id: int,
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Remove group participant."""
     # Verify participation belongs to this district
@@ -319,7 +319,7 @@ async def remove_group_participation(
 @router.get("/preview", response_model=dict)
 async def preview_district_participation(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Preview all district participations with:
@@ -350,7 +350,7 @@ async def preview_district_participation(
 @router.post("/payment", response_model=KalamelaPaymentResponse)
 async def create_payment(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Create payment record based on current participations.
@@ -375,7 +375,7 @@ async def upload_payment_proof_endpoint(
     payment_id: int,
     file: UploadFile = File(...),
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Upload payment proof."""
     # Verify payment belongs to this user
@@ -404,7 +404,7 @@ async def upload_payment_proof_endpoint(
 @router.get("/print", response_model=dict)
 async def print_district_participation(
     current_user: CustomUser = Depends(get_official_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Formatted view for printing district participation.

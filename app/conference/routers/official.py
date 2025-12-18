@@ -6,7 +6,7 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import CustomUser, UnitMembers, UserType
 from app.conference.models import ConferenceDelegate, ConferencePayment, FoodPreference
@@ -36,7 +36,7 @@ async def get_current_official(
 @router.get("/view", response_model=dict)
 async def view_conference(
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View conference details and available members for the official's district."""
     if not current_user.conference_id:
@@ -105,7 +105,7 @@ async def view_conference(
 async def add_delegate(
     member_id: int,
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add a member as a delegate."""
     if not current_user.conference_id:
@@ -124,7 +124,7 @@ async def add_delegate(
 @router.get("/delegates", response_model=dict)
 async def view_delegates(
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View all delegates (officials + members) for this district."""
     if not current_user.conference_id:
@@ -219,7 +219,7 @@ async def view_delegates(
 async def remove_delegate_member(
     member_id: int,
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Remove a member from delegates."""
     if not current_user.conference_id:
@@ -239,7 +239,7 @@ async def remove_delegate_member(
 async def make_payment(
     data: ConferencePaymentCreate,
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Upload payment proof."""
     if not current_user.conference_id:
@@ -262,7 +262,7 @@ async def make_payment(
 async def set_food_preference(
     data: FoodPreferenceCreate,
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Set food preferences for the district."""
     if not current_user.conference_id:
@@ -284,7 +284,7 @@ async def set_food_preference(
 @router.get("/export-excel", response_model=dict)
 async def export_conference_data(
     current_user: CustomUser = Depends(get_current_official),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Export district conference data to Excel (placeholder for actual Excel generation)."""
     if not current_user.conference_id:

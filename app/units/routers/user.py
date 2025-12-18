@@ -6,7 +6,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import (
     CustomUser,
@@ -68,7 +68,7 @@ async def get_current_unit_user(
 @router.get("/application-form", response_model=dict)
 async def get_application_form(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get application form data with current registration status."""
     # Get registration data
@@ -140,7 +140,7 @@ async def get_application_form(
 async def save_unit_details(
     data: UnitDetailsCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Save unit details and president information."""
     # Create or get unit details
@@ -185,7 +185,7 @@ async def save_unit_details(
 async def add_unit_member(
     data: UnitMemberCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit member."""
     # Check for duplicates
@@ -243,7 +243,7 @@ async def add_unit_member(
 @router.post("/members/submit", response_model=dict)
 async def submit_unit_members(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Mark members section as complete."""
     stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
@@ -261,7 +261,7 @@ async def submit_unit_members(
 async def add_unit_official(
     data: UnitOfficialsUpdate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add or update unit officials."""
     stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
@@ -311,7 +311,7 @@ async def add_unit_official(
 @router.post("/officials/confirm", response_model=dict)
 async def confirm_unit_officials(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Mark officials section as complete."""
     stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
@@ -329,7 +329,7 @@ async def confirm_unit_officials(
 async def add_unit_councilor(
     data: UnitCouncilorCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit councilor."""
     # Verify member exists
@@ -380,7 +380,7 @@ async def add_unit_councilor(
 @router.post("/councilors/confirm", response_model=dict)
 async def confirm_unit_councilors(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Mark councilors section as complete."""
     stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
@@ -397,7 +397,7 @@ async def confirm_unit_councilors(
 @router.post("/declaration", response_model=dict)
 async def complete_declaration(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Complete the declaration and finalize registration."""
     stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
@@ -414,7 +414,7 @@ async def complete_declaration(
 @router.get("/archived-members", response_model=List[ArchivedUnitMemberResponse])
 async def get_archived_members(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get list of archived members."""
     stmt = select(ArchivedUnitMember).where(
@@ -429,7 +429,7 @@ async def get_archived_members(
 async def create_transfer_request(
     data: UnitTransferRequestCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a unit transfer request."""
     return await units_service.create_unit_transfer_request(db, current_user.id, data)
@@ -438,7 +438,7 @@ async def create_transfer_request(
 @router.get("/transfer-requests", response_model=List[UnitTransferRequestResponse])
 async def get_transfer_requests(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get transfer requests for current user."""
     return await units_service.get_transfer_requests(db, user_id=current_user.id)
@@ -448,7 +448,7 @@ async def get_transfer_requests(
 async def create_member_change_request(
     data: UnitMemberChangeRequestCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a member information change request."""
     return await units_service.create_member_info_change_request(db, current_user.id, data)
@@ -457,7 +457,7 @@ async def create_member_change_request(
 @router.get("/member-change-requests", response_model=List[UnitMemberChangeRequestResponse])
 async def get_member_change_requests(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get member change requests for current user."""
     return await units_service.get_member_change_requests(db, user_id=current_user.id)
@@ -467,7 +467,7 @@ async def get_member_change_requests(
 async def create_officials_change_request(
     data: UnitOfficialsChangeRequestCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create an officials change request."""
     return await units_service.create_officials_change_request(db, current_user.id, data)
@@ -476,7 +476,7 @@ async def create_officials_change_request(
 @router.get("/officials-change-requests", response_model=List[UnitOfficialsChangeRequestResponse])
 async def get_officials_change_requests(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get officials change requests for current user."""
     return await units_service.get_officials_change_requests(db, user_id=current_user.id)
@@ -486,7 +486,7 @@ async def get_officials_change_requests(
 async def create_councilor_change_request(
     data: UnitCouncilorChangeRequestCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a councilor change request."""
     return await units_service.create_councilor_change_request(db, current_user.id, data)
@@ -495,7 +495,7 @@ async def create_councilor_change_request(
 @router.get("/councilor-change-requests", response_model=List[UnitCouncilorChangeRequestResponse])
 async def get_councilor_change_requests(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get councilor change requests for current user."""
     return await units_service.get_councilor_change_requests(db, user_id=current_user.id)
@@ -505,7 +505,7 @@ async def get_councilor_change_requests(
 async def create_member_add_request(
     data: UnitMemberAddRequestCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a request to add a new member."""
     return await units_service.create_member_add_request(db, current_user.id, data)
@@ -516,7 +516,7 @@ async def update_member(
     member_id: int,
     data: UnitMemberUpdate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update a unit member."""
     # Get member
@@ -558,7 +558,7 @@ async def update_member(
 async def delete_member(
     member_id: int,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a unit member."""
     # Get member
@@ -623,7 +623,7 @@ async def delete_member(
 async def update_officials(
     data: UnitOfficialsUpdate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update unit officials."""
     return await add_unit_official(data, current_user, db)
@@ -634,7 +634,7 @@ async def update_councilor(
     councilor_id: int,
     data: UnitCouncilorCreate,
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Update a councilor."""
     # Get councilor
@@ -678,7 +678,7 @@ async def update_councilor(
 @router.get("/finish-registration", response_model=dict)
 async def get_finish_registration(
     current_user: CustomUser = Depends(get_current_unit_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get final registration summary."""
     # Get all data

@@ -6,7 +6,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.auth.models import (
     CustomUser,
@@ -54,7 +54,7 @@ async def get_admin_user(
 @router.get("/home", response_model=dict)
 async def admin_home_page(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Get admin dashboard statistics."""
     # Get districts and units
@@ -143,7 +143,7 @@ async def admin_home_page(
 @router.get("/all", response_model=List[dict])
 async def list_all_units(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all registered units."""
     stmt = select(UnitRegistrationData).where(
@@ -170,7 +170,7 @@ async def list_all_units(
 async def view_unit_details(
     unit_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """View individual unit details."""
     stmt = select(CustomUser).where(CustomUser.id == unit_id).options(
@@ -217,7 +217,7 @@ async def view_unit_details(
 @router.get("/transfer-requests", response_model=List[UnitTransferRequestResponse])
 async def list_transfer_requests(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all transfer requests."""
     return await units_service.get_transfer_requests(db)
@@ -227,7 +227,7 @@ async def list_transfer_requests(
 async def approve_transfer_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a transfer request."""
     return await units_service.approve_unit_transfer_request(db, request_id)
@@ -237,7 +237,7 @@ async def approve_transfer_request(
 async def revert_transfer_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Revert a transfer request."""
     return await units_service.revert_unit_transfer_request(db, request_id)
@@ -247,7 +247,7 @@ async def revert_transfer_request(
 @router.get("/member-change-requests", response_model=List[UnitMemberChangeRequestResponse])
 async def list_member_change_requests(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all member change requests."""
     return await units_service.get_member_change_requests(db)
@@ -257,7 +257,7 @@ async def list_member_change_requests(
 async def approve_member_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a member change request."""
     return await units_service.approve_member_info_change(db, request_id)
@@ -267,7 +267,7 @@ async def approve_member_change_request(
 async def revert_member_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Revert a member change request."""
     return await units_service.revert_member_info_change(db, request_id)
@@ -277,7 +277,7 @@ async def revert_member_change_request(
 @router.get("/officials-change-requests", response_model=List[UnitOfficialsChangeRequestResponse])
 async def list_officials_change_requests(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all officials change requests."""
     return await units_service.get_officials_change_requests(db)
@@ -287,7 +287,7 @@ async def list_officials_change_requests(
 async def approve_officials_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve an officials change request."""
     return await units_service.approve_officials_change(db, request_id)
@@ -297,7 +297,7 @@ async def approve_officials_change_request(
 async def revert_officials_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Revert an officials change request."""
     return await units_service.revert_officials_change(db, request_id)
@@ -307,7 +307,7 @@ async def revert_officials_change_request(
 async def reject_officials_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Reject an officials change request."""
     return await units_service.reject_officials_change(db, request_id)
@@ -317,7 +317,7 @@ async def reject_officials_change_request(
 @router.get("/councilor-change-requests", response_model=List[UnitCouncilorChangeRequestResponse])
 async def list_councilor_change_requests(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all councilor change requests."""
     return await units_service.get_councilor_change_requests(db)
@@ -327,7 +327,7 @@ async def list_councilor_change_requests(
 async def approve_councilor_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a councilor change request."""
     return await units_service.approve_councilor_change(db, request_id)
@@ -337,7 +337,7 @@ async def approve_councilor_change_request(
 async def revert_councilor_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Revert a councilor change request."""
     return await units_service.revert_councilor_change(db, request_id)
@@ -347,7 +347,7 @@ async def revert_councilor_change_request(
 async def reject_councilor_change_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Reject a councilor change request."""
     return await units_service.reject_councilor_change(db, request_id)
@@ -357,7 +357,7 @@ async def reject_councilor_change_request(
 @router.get("/member-add-requests", response_model=List[UnitMemberAddRequestResponse])
 async def list_member_add_requests(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all member add requests."""
     return await units_service.get_member_add_requests(db)
@@ -367,7 +367,7 @@ async def list_member_add_requests(
 async def approve_member_add_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a member add request."""
     return await units_service.approve_member_add_request(db, request_id)
@@ -377,7 +377,7 @@ async def approve_member_add_request(
 async def reject_member_add_request(
     request_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Reject a member add request."""
     return await units_service.reject_member_add_request(db, request_id)
@@ -388,7 +388,7 @@ async def reject_member_add_request(
 async def archive_member(
     member_id: int,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Archive a unit member."""
     await units_service.archive_unit_member(db, member_id)
@@ -401,7 +401,7 @@ async def reset_password(
     username: str,
     new_password: str,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Reset a user's password."""
     from app.common.security import get_password_hash

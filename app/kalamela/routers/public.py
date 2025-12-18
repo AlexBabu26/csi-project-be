@@ -6,7 +6,7 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.auth.models import UnitMembers, UnitName, ClergyDistrict
 from app.kalamela.models import (
     IndividualEvent,
@@ -29,7 +29,7 @@ router = APIRouter()
 
 # Public Access
 @router.get("/home", response_model=dict)
-async def public_home(db: AsyncSession = Depends(get_db)):
+async def public_home(db: AsyncSession = Depends(get_async_db)):
     """
     Landing page data:
     - Total events
@@ -68,7 +68,7 @@ async def public_home(db: AsyncSession = Depends(get_db)):
 @router.post("/find-participant", response_model=dict)
 async def find_participant_by_chest_number(
     chest_number: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Search participant by chest number.
@@ -152,7 +152,7 @@ async def find_participant_by_chest_number(
 
 
 @router.get("/results", response_model=dict)
-async def get_top_results(db: AsyncSession = Depends(get_db)):
+async def get_top_results(db: AsyncSession = Depends(get_async_db)):
     """
     Get top 3 results for each event (individual and group).
     """
@@ -226,7 +226,7 @@ async def get_top_results(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/kalaprathibha", response_model=dict)
-async def get_kalaprathibha_kalathilakam(db: AsyncSession = Depends(get_db)):
+async def get_kalaprathibha_kalathilakam(db: AsyncSession = Depends(get_async_db)):
     """
     Calculate and return:
     - Kalaprathibha (Male): 2+ events with 2+ points each, sum points
@@ -242,7 +242,7 @@ async def get_kalaprathibha_kalathilakam(db: AsyncSession = Depends(get_db)):
 async def check_appeal_eligibility(
     chest_number: str,
     event_name: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Check if appeal can be submitted:
@@ -335,7 +335,7 @@ async def check_appeal_eligibility(
 @router.post("/appeal/submit", response_model=AppealResponse)
 async def submit_appeal(
     data: AppealCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Submit appeal with ₹1000 payment.
@@ -350,7 +350,7 @@ async def submit_appeal(
 async def view_appeal_status(
     participant_id: Optional[int] = None,
     chest_number: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     View appeal status with replies.

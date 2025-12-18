@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from app.common.db import get_db
+from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash
 from app.auth.models import (
     CustomUser,
@@ -55,7 +55,7 @@ class RegisteredUserCreate(BaseModel):
 @router.get("/districts", response_model=List[dict])
 async def list_districts(
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all clergy districts."""
     stmt = select(ClergyDistrict)
@@ -75,7 +75,7 @@ async def list_districts(
 async def create_district(
     data: DistrictCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a new clergy district."""
     # Check if district already exists
@@ -106,7 +106,7 @@ async def create_district(
 async def list_unit_names(
     district_id: int = None,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """List all unit names, optionally filtered by district."""
     stmt = select(UnitName)
@@ -137,7 +137,7 @@ async def list_unit_names(
 async def create_unit_name(
     data: UnitNameCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a new unit name."""
     # Verify district exists
@@ -186,7 +186,7 @@ async def create_unit_name(
 async def create_registered_user(
     data: RegisteredUserCreate,
     current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Create a registered unit user with auto-generated registration number."""
     # Verify district exists
