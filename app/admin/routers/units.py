@@ -402,6 +402,37 @@ async def list_all_unit_councilors(
     ]
 
 
+# Unit Members Endpoint
+@router.get("/members", response_model=List[dict])
+async def list_all_unit_members(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all unit members across all units."""
+    stmt = select(UnitMembers).options(
+        selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
+    )
+    result = await db.execute(stmt)
+    members_list = list(result.scalars().all())
+    
+    return [
+        {
+            "id": member.id,
+            "registered_user_id": member.registered_user_id,
+            "unit_name": member.registered_user.unit_name.name if member.registered_user and member.registered_user.unit_name else None,
+            "district": member.registered_user.unit_name.district.name if member.registered_user and member.registered_user.unit_name and member.registered_user.unit_name.district else None,
+            "name": member.name,
+            "gender": member.gender,
+            "dob": member.dob.isoformat() if member.dob else None,
+            "age": member.age,
+            "number": member.number,
+            "qualification": member.qualification,
+            "blood_group": member.blood_group,
+        }
+        for member in members_list
+    ]
+
+
 # Member Management
 @router.delete("/members/{member_id}", response_model=dict)
 async def archive_member(
