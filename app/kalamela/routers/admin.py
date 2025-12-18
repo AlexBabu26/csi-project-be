@@ -574,6 +574,34 @@ async def decline_payment(
 
 
 # Scoring
+@router.get("/scores/individual/event/{event_id}/candidates", response_model=List[dict])
+async def get_individual_candidates_by_id(
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get candidates for scoring by event ID."""
+    stmt = select(IndividualEventParticipation).where(
+        IndividualEventParticipation.individual_event_id == event_id
+    ).options(
+        selectinload(IndividualEventParticipation.individual_event),
+        selectinload(IndividualEventParticipation.participant)
+    ).order_by(IndividualEventParticipation.chest_number)
+    result = await db.execute(stmt)
+    participations = list(result.scalars().all())
+    
+    return [
+        {
+            "event_participation_id": p.id,
+            "chest_number": p.chest_number,
+            "participant_name": p.participant.name if p.participant else None,
+            "event_name": p.individual_event.name if p.individual_event else None,
+            "event_id": p.individual_event_id,
+        }
+        for p in participations
+    ]
+
+
 @router.post("/events/individual/candidates", response_model=List[dict])
 async def get_individual_candidates(
     event_name: str,
@@ -611,6 +639,34 @@ async def add_individual_scores(
     """Bulk add individual scores."""
     scores = await kalamela_service.add_individual_scores_bulk(db, data)
     return {"message": f"Added {len(scores)} scores successfully"}
+
+
+@router.get("/scores/group/event/{event_id}/candidates", response_model=List[dict])
+async def get_group_candidates_by_id(
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get team candidates for scoring by event ID."""
+    stmt = select(
+        GroupEventParticipation.chest_number,
+        GroupEvent.name,
+        GroupEvent.id
+    ).join(
+        GroupEvent,
+        GroupEventParticipation.group_event_id == GroupEvent.id
+    ).where(GroupEvent.id == event_id).distinct()
+    result = await db.execute(stmt)
+    teams = result.all()
+    
+    return [
+        {
+            "chest_number": team[0],
+            "event_name": team[1],
+            "event_id": team[2],
+        }
+        for team in teams
+    ]
 
 
 @router.post("/events/group/candidates", response_model=List[dict])
