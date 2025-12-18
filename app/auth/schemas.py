@@ -31,7 +31,7 @@ class LoginResponse(Token):
 
 
 class UserBase(BaseModel):
-    email: EmailStr
+    email: str  # Changed from EmailStr to support legacy phone number emails
     username: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None

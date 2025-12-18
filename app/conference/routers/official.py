@@ -23,14 +23,23 @@ router = APIRouter()
 
 async def get_current_official(
     current_user: CustomUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ) -> CustomUser:
-    """Dependency to ensure user is a district official."""
+    """Dependency to ensure user is a district official and eagerly load relationships."""
     if current_user.user_type != UserType.DISTRICT_OFFICIAL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. District official required."
         )
-    return current_user
+    
+    # Eagerly load clergy_district relationship
+    stmt = select(CustomUser).where(CustomUser.id == current_user.id).options(
+        selectinload(CustomUser.clergy_district)
+    )
+    result = await db.execute(stmt)
+    user_with_relations = result.scalar_one_or_none()
+    
+    return user_with_relations if user_with_relations else current_user
 
 
 @router.get("/view", response_model=dict)
