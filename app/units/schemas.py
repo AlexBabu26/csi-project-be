@@ -434,3 +434,10 @@ class StatusUpdate(BaseModel):
     
     status: str = Field(..., min_length=1, max_length=100)
 
+
+# Request Action Schema (for approve/reject/revert with optional remarks)
+class RequestActionSchema(BaseModel):
+    """Schema for request actions (approve, reject, revert) with optional remarks."""
+    
+    remarks: Optional[str] = Field(None, max_length=1000)
+

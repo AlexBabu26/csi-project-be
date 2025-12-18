@@ -222,6 +222,48 @@ async def revert_unit_transfer_request(
     return transfer_request
 
 
+async def reject_unit_transfer_request(
+    db: AsyncSession,
+    request_id: int,
+) -> UnitTransferRequest:
+    """
+    Reject a pending unit transfer request.
+    
+    Args:
+        db: Database session
+        request_id: ID of the transfer request
+    
+    Returns:
+        Rejected transfer request
+    
+    Raises:
+        HTTPException: If request not found or not pending
+    """
+    # Get pending transfer request
+    stmt = select(UnitTransferRequest).where(
+        and_(
+            UnitTransferRequest.id == request_id,
+            UnitTransferRequest.status == RequestStatus.PENDING
+        )
+    )
+    result = await db.execute(stmt)
+    transfer_request = result.scalar_one_or_none()
+    
+    if not transfer_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transfer request not found or not pending"
+        )
+    
+    # Update status to rejected
+    transfer_request.status = RequestStatus.REJECTED
+    
+    await db.commit()
+    await db.refresh(transfer_request)
+    
+    return transfer_request
+
+
 # Member Info Change Request Functions
 async def create_member_info_change_request(
     db: AsyncSession,
@@ -409,6 +451,48 @@ async def revert_member_info_change(
     
     # Update status back to pending
     change_request.status = RequestStatus.PENDING
+    
+    await db.commit()
+    await db.refresh(change_request)
+    
+    return change_request
+
+
+async def reject_member_info_change(
+    db: AsyncSession,
+    request_id: int,
+) -> UnitMemberChangeRequest:
+    """
+    Reject a pending member information change request.
+    
+    Args:
+        db: Database session
+        request_id: ID of the change request
+    
+    Returns:
+        Rejected change request
+    
+    Raises:
+        HTTPException: If request not found or not pending
+    """
+    # Get pending change request
+    stmt = select(UnitMemberChangeRequest).where(
+        and_(
+            UnitMemberChangeRequest.id == request_id,
+            UnitMemberChangeRequest.status == RequestStatus.PENDING
+        )
+    )
+    result = await db.execute(stmt)
+    change_request = result.scalar_one_or_none()
+    
+    if not change_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Change request not found or not pending"
+        )
+    
+    # Update status to rejected
+    change_request.status = RequestStatus.REJECTED
     
     await db.commit()
     await db.refresh(change_request)

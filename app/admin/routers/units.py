@@ -35,6 +35,7 @@ from app.units.schemas import (
     UnitOfficialsChangeRequestResponse,
     UnitCouncilorChangeRequestResponse,
     UnitMemberAddRequestResponse,
+    RequestActionSchema,
 )
 from app.units import service as units_service
 
@@ -187,9 +188,10 @@ async def list_transfer_requests(
     return await units_service.get_transfer_requests(db)
 
 
-@router.post("/transfer-requests/{request_id}/approve", response_model=UnitTransferRequestResponse)
+@router.put("/transfer-requests/{request_id}/approve", response_model=UnitTransferRequestResponse)
 async def approve_transfer_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -197,14 +199,26 @@ async def approve_transfer_request(
     return await units_service.approve_unit_transfer_request(db, request_id)
 
 
-@router.post("/transfer-requests/{request_id}/revert", response_model=UnitTransferRequestResponse)
+@router.put("/transfer-requests/{request_id}/revert", response_model=UnitTransferRequestResponse)
 async def revert_transfer_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Revert a transfer request."""
     return await units_service.revert_unit_transfer_request(db, request_id)
+
+
+@router.put("/transfer-requests/{request_id}/reject", response_model=UnitTransferRequestResponse)
+async def reject_transfer_request(
+    request_id: int,
+    action: RequestActionSchema = None,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Reject a transfer request."""
+    return await units_service.reject_unit_transfer_request(db, request_id)
 
 
 # Member Change Request Endpoints
@@ -217,9 +231,10 @@ async def list_member_change_requests(
     return await units_service.get_member_change_requests(db)
 
 
-@router.post("/member-change-requests/{request_id}/approve", response_model=UnitMemberChangeRequestResponse)
+@router.put("/member-change-requests/{request_id}/approve", response_model=UnitMemberChangeRequestResponse)
 async def approve_member_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -227,14 +242,26 @@ async def approve_member_change_request(
     return await units_service.approve_member_info_change(db, request_id)
 
 
-@router.post("/member-change-requests/{request_id}/revert", response_model=UnitMemberChangeRequestResponse)
+@router.put("/member-change-requests/{request_id}/revert", response_model=UnitMemberChangeRequestResponse)
 async def revert_member_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Revert a member change request."""
     return await units_service.revert_member_info_change(db, request_id)
+
+
+@router.put("/member-change-requests/{request_id}/reject", response_model=UnitMemberChangeRequestResponse)
+async def reject_member_change_request(
+    request_id: int,
+    action: RequestActionSchema = None,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Reject a member change request."""
+    return await units_service.reject_member_info_change(db, request_id)
 
 
 # Officials Change Request Endpoints
@@ -247,9 +274,10 @@ async def list_officials_change_requests(
     return await units_service.get_officials_change_requests(db)
 
 
-@router.post("/officials-change-requests/{request_id}/approve", response_model=UnitOfficialsChangeRequestResponse)
+@router.put("/officials-change-requests/{request_id}/approve", response_model=UnitOfficialsChangeRequestResponse)
 async def approve_officials_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -257,9 +285,10 @@ async def approve_officials_change_request(
     return await units_service.approve_officials_change(db, request_id)
 
 
-@router.post("/officials-change-requests/{request_id}/revert", response_model=UnitOfficialsChangeRequestResponse)
+@router.put("/officials-change-requests/{request_id}/revert", response_model=UnitOfficialsChangeRequestResponse)
 async def revert_officials_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -267,9 +296,10 @@ async def revert_officials_change_request(
     return await units_service.revert_officials_change(db, request_id)
 
 
-@router.post("/officials-change-requests/{request_id}/reject", response_model=UnitOfficialsChangeRequestResponse)
+@router.put("/officials-change-requests/{request_id}/reject", response_model=UnitOfficialsChangeRequestResponse)
 async def reject_officials_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -287,9 +317,10 @@ async def list_councilor_change_requests(
     return await units_service.get_councilor_change_requests(db)
 
 
-@router.post("/councilor-change-requests/{request_id}/approve", response_model=UnitCouncilorChangeRequestResponse)
+@router.put("/councilor-change-requests/{request_id}/approve", response_model=UnitCouncilorChangeRequestResponse)
 async def approve_councilor_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -297,9 +328,10 @@ async def approve_councilor_change_request(
     return await units_service.approve_councilor_change(db, request_id)
 
 
-@router.post("/councilor-change-requests/{request_id}/revert", response_model=UnitCouncilorChangeRequestResponse)
+@router.put("/councilor-change-requests/{request_id}/revert", response_model=UnitCouncilorChangeRequestResponse)
 async def revert_councilor_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -307,9 +339,10 @@ async def revert_councilor_change_request(
     return await units_service.revert_councilor_change(db, request_id)
 
 
-@router.post("/councilor-change-requests/{request_id}/reject", response_model=UnitCouncilorChangeRequestResponse)
+@router.put("/councilor-change-requests/{request_id}/reject", response_model=UnitCouncilorChangeRequestResponse)
 async def reject_councilor_change_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -327,9 +360,10 @@ async def list_member_add_requests(
     return await units_service.get_member_add_requests(db)
 
 
-@router.post("/member-add-requests/{request_id}/approve", response_model=UnitMemberAddRequestResponse)
+@router.put("/member-add-requests/{request_id}/approve", response_model=UnitMemberAddRequestResponse)
 async def approve_member_add_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -337,9 +371,10 @@ async def approve_member_add_request(
     return await units_service.approve_member_add_request(db, request_id)
 
 
-@router.post("/member-add-requests/{request_id}/reject", response_model=UnitMemberAddRequestResponse)
+@router.put("/member-add-requests/{request_id}/reject", response_model=UnitMemberAddRequestResponse)
 async def reject_member_add_request(
     request_id: int,
+    action: RequestActionSchema = None,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
