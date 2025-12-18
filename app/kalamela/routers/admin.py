@@ -76,9 +76,32 @@ async def admin_home(
     result_grp = await db.execute(stmt_grp)
     group_events = list(result_grp.scalars().all())
     
+    # Convert to dicts for serialization
+    individual_events_list = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "category": e.category,
+            "description": e.description,
+        }
+        for e in individual_events
+    ]
+    
+    group_events_list = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "description": e.description,
+            "min_allowed_limit": e.min_allowed_limit,
+            "max_allowed_limit": e.max_allowed_limit,
+            "per_unit_allowed_limit": e.per_unit_allowed_limit,
+        }
+        for e in group_events
+    ]
+    
     return {
-        "individual_events": individual_events,
-        "group_events": group_events,
+        "individual_events": individual_events_list,
+        "group_events": group_events_list,
     }
 
 
@@ -462,10 +485,33 @@ async def view_events_preview(
     result = await db.execute(stmt)
     group_scored_events = [row[0] for row in result.all()]
     
+    # Convert events to dicts for serialization
+    individual_events_list = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "category": e.category,
+            "description": e.description,
+        }
+        for e in individual_events
+    ]
+    
+    group_events_list = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "description": e.description,
+            "min_allowed_limit": e.min_allowed_limit,
+            "max_allowed_limit": e.max_allowed_limit,
+            "per_unit_allowed_limit": e.per_unit_allowed_limit,
+        }
+        for e in group_events
+    ]
+    
     return {
         "clergy_districts": [{"id": d.id, "name": d.name} for d in districts],
-        "individual_events": individual_events,
-        "group_events": group_events,
+        "individual_events": individual_events_list,
+        "group_events": group_events_list,
         "district": district_name,
         "individual_event_participations": individual_participations,
         "group_event_participations": group_participations,
