@@ -7,8 +7,10 @@ from alembic import context
 from app.common.db import Base
 from app.common.config import get_settings
 import app.auth.models  # noqa
+import app.units.models  # noqa
 import app.conference.models  # noqa
 import app.kalamela.models  # noqa
+import app.admin.models  # noqa
 
 config = context.config
 

@@ -19,3 +19,15 @@ def export_users(db: Session = Depends(get_db)):
     path = AdminService(db).export_users()
     return FileResponse(path, filename="users.xlsx")
 
+
+@router.get("/statistics/districts")
+def get_all_districts_statistics(db: Session = Depends(get_db)):
+    """Get participation statistics for all districts"""
+    return AdminService(db).get_district_statistics()
+
+
+@router.get("/statistics/districts/{district_id}")
+def get_district_statistics(district_id: int, db: Session = Depends(get_db)):
+    """Get participation statistics for a specific district"""
+    return AdminService(db).get_district_statistics(district_id)
+

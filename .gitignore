@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Storage directories (if using local fallback)
+storage/
+
+# Database
+*.db
+*.sqlite

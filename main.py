@@ -4,8 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.common.config import get_settings
 from app.auth import router as auth_router
-from app.api.routers import admin  # keep admin router for now
-from app.conference import router as conference_router
+from app.units.routers import user as units_user
+from app.conference.routers import official as conference_official, public as conference_public
+from app.admin.routers import units as admin_units, conference as admin_conference, system as admin_system, site as admin_site
 from app.kalamela.routers import public as kalamela_public, official as kalamela_official, admin as kalamela_admin
 
 
@@ -17,19 +18,27 @@ app = FastAPI(title=settings.app_name, version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(auth_router.router, prefix="/auth", tags=["auth"])
-app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(conference_router.router, prefix="/conference", tags=["conference"])
-app.include_router(kalamela_public.router, prefix="/kalamela", tags=["kalamela-public"])
-app.include_router(kalamela_official.router, prefix="/kalamela/official", tags=["kalamela-official"])
-app.include_router(kalamela_admin.router, prefix="/kalamela/admin", tags=["kalamela-admin"])
+# Routers - all under /api prefix
+app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
+app.include_router(units_user.router, prefix="/api/units", tags=["units"])
+app.include_router(conference_official.router, prefix="/api/conference/official", tags=["conference-official"])
+app.include_router(conference_public.router, prefix="/api/conference/public", tags=["conference-public"])
+app.include_router(admin_units.router, prefix="/api/admin/units", tags=["admin-units"])
+app.include_router(admin_conference.router, prefix="/api/admin/conference", tags=["admin-conference"])
+app.include_router(admin_system.router, prefix="/api/admin/system", tags=["admin-system"])
+app.include_router(admin_site.router, prefix="/api", tags=["site-settings"])
+app.include_router(kalamela_public.router, prefix="/api/kalamela", tags=["kalamela-public"])
+app.include_router(kalamela_official.router, prefix="/api/kalamela/official", tags=["kalamela-official"])
+app.include_router(kalamela_admin.router, prefix="/api/kalamela/admin", tags=["kalamela-admin"])
 
 
 @app.get("/health", tags=["system"])

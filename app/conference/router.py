@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.common.db import get_db
-from app.auth.models import UserType
+from app.auth.models import UserType, CustomUser
 from app.kalamela.models import PaymentStatus
 from app.conference import schemas as conf_schema
-from app.common.security import get_current_payload, require_role
+from app.common.security import get_current_user_sync, require_role
 from app.conference.service import ConferenceService
 
 router = APIRouter()
@@ -30,10 +30,10 @@ def add_delegate(payload: conf_schema.DelegateCreate, db: Session = Depends(get_
 @router.post("/payment", response_model=conf_schema.ConferencePaymentRead, dependencies=[Depends(require_role("1", "3"))])
 def create_payment(
     payload: conf_schema.ConferencePaymentCreate,
-    current=Depends(get_current_payload),
+    current_user: CustomUser = Depends(get_current_user_sync),
     db: Session = Depends(get_db),
 ):
-    return ConferenceService(db).create_payment(int(current.sub), payload, proof_path=None)
+    return ConferenceService(db).create_payment(current_user.id, payload, proof_path=None)
 
 
 @router.post("/payment/{payment_id}/proof", response_model=conf_schema.ConferencePaymentRead, dependencies=[Depends(require_role("1", "3"))])

@@ -1,8 +1,8 @@
 import enum
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
@@ -68,6 +68,7 @@ class CustomUser(Base):
         "UnitOfficials", back_populates="registered_user", uselist=False
     )
     unit_councilors: Mapped[List["UnitCouncilor"]] = relationship("UnitCouncilor", back_populates="registered_user")
+    refresh_tokens: Mapped[List["RefreshToken"]] = relationship("RefreshToken", back_populates="user")
 
 
 class UnitRegistrationData(Base):
@@ -105,17 +106,36 @@ class UnitMembers(Base):
 
     registered_user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="unit_members")
 
+    @property
+    def age(self) -> int:
+        """Calculate current age from date of birth."""
+        if not self.dob:
+            return 0
+        today = date.today()
+        return today.year - self.dob.year - ((today.month, today.day) < (self.dob.month, self.dob.day))
+
 
 class UnitOfficials(Base):
     __tablename__ = "unit_officials"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     registered_user_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), unique=True, nullable=False)
-    president: Mapped[Optional[str]] = mapped_column(String(255))
-    vice_president: Mapped[Optional[str]] = mapped_column(String(255))
-    secretary: Mapped[Optional[str]] = mapped_column(String(255))
-    joint_secretary: Mapped[Optional[str]] = mapped_column(String(255))
-    treasurer: Mapped[Optional[str]] = mapped_column(String(255))
+    
+    president_designation: Mapped[Optional[str]] = mapped_column(String(50))
+    president_name: Mapped[Optional[str]] = mapped_column(String(255))
+    president_phone: Mapped[Optional[str]] = mapped_column(String(30))
+    
+    vice_president_name: Mapped[Optional[str]] = mapped_column(String(255))
+    vice_president_phone: Mapped[Optional[str]] = mapped_column(String(30))
+    
+    secretary_name: Mapped[Optional[str]] = mapped_column(String(255))
+    secretary_phone: Mapped[Optional[str]] = mapped_column(String(30))
+    
+    joint_secretary_name: Mapped[Optional[str]] = mapped_column(String(255))
+    joint_secretary_phone: Mapped[Optional[str]] = mapped_column(String(30))
+    
+    treasurer_name: Mapped[Optional[str]] = mapped_column(String(255))
+    treasurer_phone: Mapped[Optional[str]] = mapped_column(String(30))
 
     registered_user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="unit_officials")
 
@@ -139,4 +159,19 @@ class LoginAudit(Base):
     username: Mapped[str] = mapped_column(String(150))
     success: Mapped[bool] = mapped_column(Boolean, default=False)
     __table_args__ = (CheckConstraint("username <> ''", name="ck_login_audit_username_nonempty"),)
+
+
+class RefreshToken(Base):
+    """Store refresh tokens for JWT authentication with token management."""
+    __tablename__ = "refresh_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Relationship
+    user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="refresh_tokens")
 

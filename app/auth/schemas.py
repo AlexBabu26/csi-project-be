@@ -9,13 +9,25 @@ from app.common.schemas import Timestamped
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int = 900  # 15 minutes in seconds
 
 
 class TokenPayload(BaseModel):
     sub: Optional[str] = None
     exp: Optional[int] = None
     role: Optional[str] = None
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class LoginResponse(Token):
+    """Login response with user routing information."""
+    user_type: str
+    redirect_url: str
 
 
 class UserBase(BaseModel):

@@ -1,70 +1,91 @@
-from datetime import datetime
-from typing import List, Optional
-import enum
+"""Conference module models."""
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
-from app.auth.models import CustomUser
-from app.kalamela.models import PaymentStatus
-
-
-class ConferenceRegistrationStatus(str, enum.Enum):
-    STARTED = "Registration Started"
-    SUBMITTED = "Submitted"
-    APPROVED = "Approved"
 
 
 class Conference(Base):
+    """Conference model for managing conferences."""
+    
     __tablename__ = "conference"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    details: Mapped[Optional[str]] = mapped_column(String(1000))
-    added_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    status: Mapped[str] = mapped_column(String(64), default="active")
-
-    delegates: Mapped[List["ConferenceDelegate"]] = relationship("ConferenceDelegate", back_populates="conference")
-    payments: Mapped[List["ConferencePayment"]] = relationship("ConferencePayment", back_populates="conference")
+    details: Mapped[str] = mapped_column(Text, nullable=False)
+    added_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="Active", nullable=False)
 
 
 class ConferenceRegistrationData(Base):
+    """Registration status tracking for conference district officials."""
+    
     __tablename__ = "conference_registration_data"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    district_official_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(64), default=ConferenceRegistrationStatus.STARTED.value)
-
-    district_official: Mapped[CustomUser] = relationship("CustomUser")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    district_official_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(100), default="Registration Started", nullable=False)
 
 
 class ConferenceDelegate(Base):
+    """
+    Conference delegates model linking officials and their member delegates.
+    Each delegate entry represents either an official or a member delegated by an official.
+    """
+    
     __tablename__ = "conference_delegate"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    conference_id: Mapped[int] = mapped_column(ForeignKey("conference.id"), nullable=False)
-    officials_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False)
-    members_id: Mapped[Optional[int]] = mapped_column(ForeignKey("unit_members.id"))
-
-    __table_args__ = (UniqueConstraint("conference_id", "officials_id", name="uq_delegate_per_conf_official"),)
-
-    conference: Mapped[Conference] = relationship("Conference", back_populates="delegates")
-    official: Mapped[CustomUser] = relationship("CustomUser")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conference_id: Mapped[int] = mapped_column(
+        ForeignKey("conference.id"), nullable=False, index=True
+    )
+    officials_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=False, index=True
+    )
+    members_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("unit_members.id"), nullable=True, index=True
+    )
 
 
 class ConferencePayment(Base):
+    """Payment tracking for conference registrations."""
+    
     __tablename__ = "conference_payment"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    conference_id: Mapped[int] = mapped_column(ForeignKey("conference.id"), nullable=False)
-    amount_to_pay: Mapped[int] = mapped_column(Integer, nullable=False)
-    uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False)
-    proof_path: Mapped[Optional[str]] = mapped_column(String(500))
-    date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    status: Mapped[PaymentStatus] = mapped_column(SAEnum(PaymentStatus), default=PaymentStatus.PENDING)
-    payment_reference: Mapped[Optional[str]] = mapped_column(String(128))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conference_id: Mapped[int] = mapped_column(
+        ForeignKey("conference.id"), nullable=False, index=True
+    )
+    amount_to_pay: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
+    uploaded_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=True, index=True
+    )
+    proof: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # File path
+    date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # PAID, NOT PAID, PENDING
 
-    conference: Mapped[Conference] = relationship("Conference", back_populates="payments")
-    uploaded_by: Mapped[CustomUser] = relationship("CustomUser")
 
+class FoodPreference(Base):
+    """Food preference tracking for conference delegates by district."""
+    
+    __tablename__ = "food_preference"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conference_id: Mapped[int] = mapped_column(
+        ForeignKey("conference.id"), nullable=False, index=True
+    )
+    veg_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    non_veg_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    uploaded_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
