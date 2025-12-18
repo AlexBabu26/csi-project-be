@@ -7,7 +7,6 @@ import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -20,16 +19,55 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 settings = get_settings()
 
 
-# def verify_password(plain_password: str, hashed_password: str) -> bool:
-#     """Verify a plain password against a hashed password."""
-#     return pwd_context.verify(plain_password, hashed_password)
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain password against a hashed password."""
-    return bcrypt.checkpw(
-        plain_password.encode('utf-8'),
-        hashed_password.encode('utf-8')
-    )
+    """
+    Verify a plain password against a hashed password.
+    
+    Supports both:
+    - bcrypt hashes (new FastAPI format)
+    - Django's pbkdf2_sha256 hashes (migrated from Django)
+    """
+    if hashed_password.startswith('pbkdf2_sha256$'):
+        # Django password hash format: pbkdf2_sha256$iterations$salt$hash
+        return _verify_django_password(plain_password, hashed_password)
+    else:
+        # bcrypt format (new passwords)
+        try:
+            return bcrypt.checkpw(
+                plain_password.encode('utf-8'),
+                hashed_password.encode('utf-8')
+            )
+        except Exception:
+            return False
+
+
+def _verify_django_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against Django's pbkdf2_sha256 hash."""
+    import hashlib
+    import base64
+    
+    try:
+        algorithm, iterations, salt, hash_b64 = hashed_password.split('$')
+        if algorithm != 'pbkdf2_sha256':
+            return False
+        
+        iterations = int(iterations)
+        expected_hash = base64.b64decode(hash_b64)
+        
+        # Compute the hash using the same parameters
+        computed_hash = hashlib.pbkdf2_hmac(
+            'sha256',
+            plain_password.encode('utf-8'),
+            salt.encode('utf-8'),
+            iterations,
+            dklen=len(expected_hash)
+        )
+        
+        # Constant-time comparison
+        import hmac
+        return hmac.compare_digest(computed_hash, expected_hash)
+    except Exception:
+        return False
 
 
 # def get_password_hash(password: str) -> str:
