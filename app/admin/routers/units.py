@@ -1,13 +1,14 @@
 """Admin units router - administrative endpoints for units management."""
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user
+from app.common.cache import get_cache, set_cache
 from app.auth.models import (
     CustomUser,
     UnitMembers,
@@ -57,77 +58,79 @@ async def get_admin_user(
 async def admin_home_page(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """Get admin dashboard statistics. Accessible via /home or /dashboard."""
-    # Get districts and units
-    stmt = select(ClergyDistrict)
-    result = await db.execute(stmt)
-    districts = list(result.scalars().all())
+    """Get admin dashboard statistics. Accessible via /home or /dashboard. Cached for 5 minutes."""
+    from sqlalchemy import case, distinct
     
-    stmt = select(UnitName)
-    result = await db.execute(stmt)
-    units = list(result.scalars().all())
+    cache_key = "admin_dashboard"
     
-    # Get units data excluding admin
-    stmt = select(UnitRegistrationData).where(
-        UnitRegistrationData.registered_user_id != current_user.id
-    ).options(selectinload(UnitRegistrationData.registered_user))
-    result = await db.execute(stmt)
-    units_data = list(result.scalars().all())
+    # Check cache unless refresh is requested
+    if not refresh:
+        cached_data = get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
     
-    # Get unit members counts
-    stmt = select(func.count()).select_from(UnitMembers)
-    result = await db.execute(stmt)
-    unit_members_count = result.scalar()
-    
-    stmt = select(func.count()).select_from(UnitMembers).where(UnitMembers.gender == 'M')
-    result = await db.execute(stmt)
-    unit_members_males_count = result.scalar()
-    
-    stmt = select(func.count()).select_from(UnitMembers).where(UnitMembers.gender == 'F')
-    result = await db.execute(stmt)
-    unit_females_count = result.scalar()
-    
-    # Get unit with max members
+    # Single query for total counts
     stmt = select(
-        UnitMembers.registered_user_id,
-        func.count(UnitMembers.id).label('count')
-    ).group_by(UnitMembers.registered_user_id).order_by(func.count(UnitMembers.id).desc())
+        func.count(distinct(ClergyDistrict.id)).label('total_districts'),
+        func.count(distinct(UnitName.id)).label('total_units')
+    ).select_from(ClergyDistrict).outerjoin(UnitName)
     result = await db.execute(stmt)
-    max_member_unit = result.first()
+    counts = result.one()
+    total_dist_count = counts[0] or 0
+    total_units_count = counts[1] or 0
     
-    if max_member_unit:
-        stmt = select(CustomUser).where(CustomUser.id == max_member_unit[0]).options(
-            selectinload(CustomUser.unit_name)
-        )
-        result = await db.execute(stmt)
-        max_user = result.scalar_one()
-        max_member_unit_name = max_user.unit_name.name if max_user.unit_name else "Unknown"
-        max_member_count = max_member_unit[1]
-    else:
-        max_member_unit_name = "N/A"
-        max_member_count = 0
+    # Single query for completed registrations and district counts
+    stmt = select(
+        func.count(distinct(UnitRegistrationData.id)).label('completed_units'),
+        func.count(distinct(UnitName.clergy_district_id)).label('completed_districts')
+    ).select_from(UnitRegistrationData).join(
+        CustomUser, UnitRegistrationData.registered_user_id == CustomUser.id
+    ).join(
+        UnitName, CustomUser.unit_name_id == UnitName.id
+    ).where(
+        UnitRegistrationData.status == "Registration Completed",
+        UnitRegistrationData.registered_user_id != current_user.id
+    )
+    result = await db.execute(stmt)
+    completed = result.one()
+    completed_units_count = completed[0] or 0
+    completed_dist_count = completed[1] or 0
     
-    # Calculate registered districts and units
-    dist_list = [district.name for district in districts]
-    units_list = [unit.name for unit in units]
+    # Single query for all member counts (total, male, female)
+    stmt = select(
+        func.count(UnitMembers.id).label('total'),
+        func.count(case((UnitMembers.gender == 'M', 1))).label('male'),
+        func.count(case((UnitMembers.gender == 'F', 1))).label('female')
+    ).select_from(UnitMembers)
+    result = await db.execute(stmt)
+    member_counts = result.one()
+    unit_members_count = member_counts[0] or 0
+    unit_members_males_count = member_counts[1] or 0
+    unit_females_count = member_counts[2] or 0
     
-    # Get registered districts
-    registered_district_names = set()
-    for unit_data in units_data:
-        if unit_data.registered_user and unit_data.registered_user.unit_name:
-            registered_district_names.add(unit_data.registered_user.unit_name.district.name)
+    # Single query for max member unit with unit name
+    stmt = select(
+        UnitName.name,
+        func.count(UnitMembers.id).label('count')
+    ).select_from(UnitMembers).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
+    ).join(
+        UnitName, CustomUser.unit_name_id == UnitName.id
+    ).group_by(UnitName.id, UnitName.name).order_by(
+        func.count(UnitMembers.id).desc()
+    ).limit(1)
+    result = await db.execute(stmt)
+    max_unit = result.first()
     
-    completed_dist_count = len(registered_district_names)
-    completed_units_count = len([u for u in units_data if u.status == "Registration Completed"])
-    
-    total_dist_count = len(dist_list)
-    total_units_count = len(units_list)
+    max_member_unit_name = max_unit[0] if max_unit else "N/A"
+    max_member_count = max_unit[1] if max_unit else 0
     
     completed_dists_percent = (completed_dist_count / total_dist_count * 100) if total_dist_count > 0 else 0
     completed_units_percent = (completed_units_count / total_units_count * 100) if total_units_count > 0 else 0
     
-    return {
+    result_data = {
         "total_dist_count": total_dist_count,
         "total_units_count": total_units_count,
         "completed_dist_count": completed_dist_count,
@@ -140,6 +143,11 @@ async def admin_home_page(
         "max_member_unit": max_member_unit_name,
         "max_member_unit_count": max_member_count,
     }
+    
+    # Cache for 5 minutes (300 seconds)
+    set_cache(cache_key, result_data, ttl_seconds=300)
+    
+    return result_data
 
 
 @router.get("/all", response_model=List[dict])
@@ -339,20 +347,28 @@ async def reject_member_add_request(
     return await units_service.reject_member_add_request(db, request_id)
 
 
-# Unit Officials Endpoint
-@router.get("/officials", response_model=List[dict])
+# Unit Officials Endpoint with Pagination
+@router.get("/officials", response_model=dict)
 async def list_all_unit_officials(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    page: int = 1,
+    page_size: int = 50,
 ):
-    """List all unit officials across all units."""
+    """List all unit officials across all units with pagination."""
+    # Get total count
+    count_stmt = select(func.count()).select_from(UnitOfficials)
+    total = (await db.execute(count_stmt)).scalar() or 0
+    
+    # Get paginated data
+    offset = (page - 1) * page_size
     stmt = select(UnitOfficials).options(
         selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
-    )
+    ).offset(offset).limit(page_size)
     result = await db.execute(stmt)
     officials_list = list(result.scalars().all())
     
-    return [
+    data = [
         {
             "id": officials.id,
             "registered_user_id": officials.registered_user_id,
@@ -372,23 +388,33 @@ async def list_all_unit_officials(
         }
         for officials in officials_list
     ]
+    
+    return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
-# Unit Councilors Endpoint
-@router.get("/councilors", response_model=List[dict])
+# Unit Councilors Endpoint with Pagination
+@router.get("/councilors", response_model=dict)
 async def list_all_unit_councilors(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    page: int = 1,
+    page_size: int = 50,
 ):
-    """List all unit councilors across all units."""
+    """List all unit councilors across all units with pagination."""
+    # Get total count
+    count_stmt = select(func.count()).select_from(UnitCouncilor)
+    total = (await db.execute(count_stmt)).scalar() or 0
+    
+    # Get paginated data
+    offset = (page - 1) * page_size
     stmt = select(UnitCouncilor).options(
         selectinload(UnitCouncilor.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
         selectinload(UnitCouncilor.unit_member)
-    )
+    ).offset(offset).limit(page_size)
     result = await db.execute(stmt)
     councilors_list = list(result.scalars().all())
     
-    return [
+    data = [
         {
             "id": councilor.id,
             "registered_user_id": councilor.registered_user_id,
@@ -401,22 +427,32 @@ async def list_all_unit_councilors(
         }
         for councilor in councilors_list
     ]
+    
+    return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
-# Unit Members Endpoint
-@router.get("/members", response_model=List[dict])
+# Unit Members Endpoint with Pagination
+@router.get("/members", response_model=dict)
 async def list_all_unit_members(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    page: int = 1,
+    page_size: int = 50,
 ):
-    """List all unit members across all units."""
+    """List all unit members across all units with pagination."""
+    # Get total count
+    count_stmt = select(func.count()).select_from(UnitMembers)
+    total = (await db.execute(count_stmt)).scalar() or 0
+    
+    # Get paginated data
+    offset = (page - 1) * page_size
     stmt = select(UnitMembers).options(
         selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
-    )
+    ).offset(offset).limit(page_size)
     result = await db.execute(stmt)
     members_list = list(result.scalars().all())
     
-    return [
+    data = [
         {
             "id": member.id,
             "registered_user_id": member.registered_user_id,
@@ -432,20 +468,30 @@ async def list_all_unit_members(
         }
         for member in members_list
     ]
+    
+    return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
-# Archived Unit Members Endpoint
-@router.get("/archived-members", response_model=List[dict])
+# Archived Unit Members Endpoint with Pagination
+@router.get("/archived-members", response_model=dict)
 async def list_all_archived_members(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    page: int = 1,
+    page_size: int = 50,
 ):
-    """List all archived unit members across all units."""
-    stmt = select(ArchivedUnitMember).order_by(ArchivedUnitMember.archived_at.desc())
+    """List all archived unit members across all units with pagination."""
+    # Get total count
+    count_stmt = select(func.count()).select_from(ArchivedUnitMember)
+    total = (await db.execute(count_stmt)).scalar() or 0
+    
+    # Get paginated data
+    offset = (page - 1) * page_size
+    stmt = select(ArchivedUnitMember).order_by(ArchivedUnitMember.archived_at.desc()).offset(offset).limit(page_size)
     result = await db.execute(stmt)
     archived_list = list(result.scalars().all())
     
-    return [
+    data = [
         {
             "id": member.id,
             "registered_user_id": member.registered_user_id,
@@ -460,6 +506,8 @@ async def list_all_archived_members(
         }
         for member in archived_list
     ]
+    
+    return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
 # Member Management

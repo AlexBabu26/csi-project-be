@@ -1,13 +1,14 @@
 """Admin system router - system-wide administrative functions."""
 
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash
+from app.common.cache import get_cache, set_cache
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from app.auth.models import (
@@ -54,80 +55,87 @@ class RegisteredUserCreate(BaseModel):
     password: str = Field(..., min_length=1)
 
 
-# District-wise Data Endpoint
+# District-wise Data Endpoint - Optimized with single aggregated queries and caching
 @router.get("/district-wise-data", response_model=List[dict])
 async def get_district_wise_data(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """Get district-wise summary data including units and members count."""
-    # Get all districts with their units
+    """Get district-wise summary data including units and members count. Cached for 5 minutes."""
+    from sqlalchemy import case, distinct
+    
+    cache_key = "district_wise_data"
+    
+    # Check cache unless refresh is requested
+    if not refresh:
+        cached_data = get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+    
+    # Get all districts with unit counts in a single query
     stmt = select(ClergyDistrict).options(selectinload(ClergyDistrict.units))
     result = await db.execute(stmt)
     districts = list(result.scalars().all())
     
-    district_data = []
+    # Build district data dict for quick lookup
+    district_data = {d.id: {
+        "id": d.id,
+        "name": d.name,
+        "total_units": len(d.units),
+        "registered_units": 0,
+        "completed_units": 0,
+        "total_members": 0,
+        "male_members": 0,
+        "female_members": 0,
+    } for d in districts}
     
-    for district in districts:
-        # Get unit IDs for this district
-        unit_ids = [unit.id for unit in district.units]
-        
-        # Get registered units count
-        stmt = select(func.count()).select_from(CustomUser).where(
-            CustomUser.unit_name_id.in_(unit_ids),
-            CustomUser.user_type == UserType.UNIT
-        )
-        result = await db.execute(stmt)
-        registered_units = result.scalar() or 0
-        
-        # Get completed registrations count
-        stmt = select(func.count()).select_from(UnitRegistrationData).join(
-            CustomUser, UnitRegistrationData.registered_user_id == CustomUser.id
-        ).where(
-            CustomUser.unit_name_id.in_(unit_ids),
-            UnitRegistrationData.status == "Registration Completed"
-        )
-        result = await db.execute(stmt)
-        completed_units = result.scalar() or 0
-        
-        # Get total members count for this district
-        stmt = select(func.count()).select_from(UnitMembers).join(
-            CustomUser, UnitMembers.registered_user_id == CustomUser.id
-        ).where(CustomUser.unit_name_id.in_(unit_ids))
-        result = await db.execute(stmt)
-        total_members = result.scalar() or 0
-        
-        # Get male/female counts
-        stmt = select(func.count()).select_from(UnitMembers).join(
-            CustomUser, UnitMembers.registered_user_id == CustomUser.id
-        ).where(
-            CustomUser.unit_name_id.in_(unit_ids),
-            UnitMembers.gender == 'M'
-        )
-        result = await db.execute(stmt)
-        male_members = result.scalar() or 0
-        
-        stmt = select(func.count()).select_from(UnitMembers).join(
-            CustomUser, UnitMembers.registered_user_id == CustomUser.id
-        ).where(
-            CustomUser.unit_name_id.in_(unit_ids),
-            UnitMembers.gender == 'F'
-        )
-        result = await db.execute(stmt)
-        female_members = result.scalar() or 0
-        
-        district_data.append({
-            "id": district.id,
-            "name": district.name,
-            "total_units": len(district.units),
-            "registered_units": registered_units,
-            "completed_units": completed_units,
-            "total_members": total_members,
-            "male_members": male_members,
-            "female_members": female_members,
-        })
+    # Single query for registered and completed units per district
+    stmt = select(
+        UnitName.clergy_district_id,
+        func.count(distinct(CustomUser.id)).label('registered'),
+        func.count(distinct(case(
+            (UnitRegistrationData.status == "Registration Completed", CustomUser.id)
+        ))).label('completed')
+    ).select_from(CustomUser).join(
+        UnitName, CustomUser.unit_name_id == UnitName.id
+    ).outerjoin(
+        UnitRegistrationData, UnitRegistrationData.registered_user_id == CustomUser.id
+    ).where(
+        CustomUser.user_type == UserType.UNIT
+    ).group_by(UnitName.clergy_district_id)
     
-    return district_data
+    result = await db.execute(stmt)
+    for row in result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["registered_units"] = row[1] or 0
+            district_data[row[0]]["completed_units"] = row[2] or 0
+    
+    # Single query for member counts per district
+    stmt = select(
+        UnitName.clergy_district_id,
+        func.count(UnitMembers.id).label('total'),
+        func.count(case((UnitMembers.gender == 'M', 1))).label('male'),
+        func.count(case((UnitMembers.gender == 'F', 1))).label('female')
+    ).select_from(UnitMembers).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
+    ).join(
+        UnitName, CustomUser.unit_name_id == UnitName.id
+    ).group_by(UnitName.clergy_district_id)
+    
+    result = await db.execute(stmt)
+    for row in result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["total_members"] = row[1] or 0
+            district_data[row[0]]["male_members"] = row[2] or 0
+            district_data[row[0]]["female_members"] = row[3] or 0
+    
+    result_data = list(district_data.values())
+    
+    # Cache for 5 minutes (300 seconds)
+    set_cache(cache_key, result_data, ttl_seconds=300)
+    
+    return result_data
 
 
 # District Endpoints

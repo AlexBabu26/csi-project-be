@@ -272,10 +272,10 @@ def get_current_user_sync(
 def require_role(*roles: str):
     """
     Dependency to require specific roles.
-    
+
     Args:
         *roles: One or more role values to allow
-    
+
     Returns:
         Dependency function
     """

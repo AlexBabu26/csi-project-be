@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from app.common.config import get_settings
 
@@ -13,8 +14,23 @@ settings = get_settings()
 # postgresql+psycopg:// -> postgresql+psycopg:// (psycopg3 supports both sync and async)
 database_url = settings.database_url
 
+# Connection pool settings for Neon serverless PostgreSQL
+POOL_SIZE = 5  # Number of persistent connections
+MAX_OVERFLOW = 10  # Additional connections when pool is exhausted
+POOL_RECYCLE = 300  # Recycle connections every 5 minutes
+POOL_PRE_PING = True  # Check connection health before using
+
 # Sync engine and session (for sync endpoints like auth)
-sync_engine = create_engine(database_url, echo=settings.debug, future=True)
+sync_engine = create_engine(
+    database_url,
+    echo=settings.debug,
+    future=True,
+    poolclass=QueuePool,
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_recycle=POOL_RECYCLE,
+    pool_pre_ping=POOL_PRE_PING,
+)
 SyncSessionLocal = sessionmaker(
     bind=sync_engine, autoflush=False, autocommit=False, expire_on_commit=False
 )
@@ -24,6 +40,10 @@ SyncSessionLocal = sessionmaker(
 async_engine = create_async_engine(
     database_url.replace("postgresql+psycopg", "postgresql+psycopg"),
     echo=settings.debug,
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_recycle=POOL_RECYCLE,
+    pool_pre_ping=POOL_PRE_PING,
 )
 AsyncSessionLocal = async_sessionmaker(
     bind=async_engine, autoflush=False, autocommit=False, expire_on_commit=False
