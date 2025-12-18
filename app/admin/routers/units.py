@@ -52,11 +52,12 @@ async def get_admin_user(
 
 
 @router.get("/home", response_model=dict)
+@router.get("/dashboard", response_model=dict)
 async def admin_home_page(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Get admin dashboard statistics."""
+    """Get admin dashboard statistics. Accessible via /home or /dashboard."""
     # Get districts and units
     stmt = select(ClergyDistrict)
     result = await db.execute(stmt)
@@ -141,11 +142,12 @@ async def admin_home_page(
 
 
 @router.get("/all", response_model=List[dict])
+@router.get("", response_model=List[dict])
 async def list_all_units(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all registered units."""
+    """List all registered units. Accessible via /all or root path."""
     stmt = select(UnitRegistrationData).where(
         UnitRegistrationData.registered_user_id != current_user.id
     ).options(
