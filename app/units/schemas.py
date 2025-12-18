@@ -97,12 +97,15 @@ class UnitTransferRequestUpdate(BaseModel):
     status: RequestStatus
 
 
-class UnitTransferRequestResponse(UnitTransferRequestBase):
+class UnitTransferRequestResponse(BaseModel):
     """Response schema for unit transfer requests."""
     
     model_config = ConfigDict(from_attributes=True)
     
     id: int
+    unit_member_id: int
+    destination_unit_id: int
+    reason: str  # No min_length for response - existing data may have shorter values
     current_unit_id: Optional[int]
     original_registered_user_id: Optional[int]
     proof: str
@@ -138,12 +141,14 @@ class UnitMemberChangeRequestCreate(UnitMemberChangeRequestBase):
         return v
 
 
-class UnitMemberChangeRequestResponse(UnitMemberChangeRequestBase):
+class UnitMemberChangeRequestResponse(BaseModel):
     """Response schema for unit member change requests."""
     
     model_config = ConfigDict(from_attributes=True)
     
     id: int
+    unit_member_id: int
+    reason: str  # No min_length for response - existing data may have shorter values
     name: Optional[str]
     gender: Optional[str]
     dob: Optional[date]
@@ -193,12 +198,14 @@ class UnitOfficialsChangeRequestCreate(UnitOfficialsChangeRequestBase):
         return v
 
 
-class UnitOfficialsChangeRequestResponse(UnitOfficialsChangeRequestBase):
+class UnitOfficialsChangeRequestResponse(BaseModel):
     """Response schema for unit officials change requests."""
     
     model_config = ConfigDict(from_attributes=True)
     
     id: int
+    unit_official_id: int
+    reason: str  # No min_length for response - existing data may have shorter values
     president_designation: Optional[str]
     president_name: Optional[str]
     president_phone: Optional[str]
@@ -250,12 +257,14 @@ class UnitCouncilorChangeRequestCreate(UnitCouncilorChangeRequestBase):
         return v
 
 
-class UnitCouncilorChangeRequestResponse(UnitCouncilorChangeRequestBase):
+class UnitCouncilorChangeRequestResponse(BaseModel):
     """Response schema for unit councilor change requests."""
     
     model_config = ConfigDict(from_attributes=True)
     
     id: int
+    unit_councilor_id: int
+    reason: str  # No min_length for response - existing data may have shorter values
     unit_member_id: Optional[int]
     original_unit_member_id: Optional[int]
     proof: str
@@ -291,13 +300,20 @@ class UnitMemberAddRequestCreate(UnitMemberAddRequestBase):
         return v
 
 
-class UnitMemberAddRequestResponse(UnitMemberAddRequestBase):
+class UnitMemberAddRequestResponse(BaseModel):
     """Response schema for unit member add requests."""
     
     model_config = ConfigDict(from_attributes=True)
     
     id: int
     registered_user_id: int
+    name: str
+    gender: str
+    dob: date
+    number: str
+    qualification: Optional[str]
+    blood_group: Optional[str]
+    reason: str  # No min_length for response - existing data may have shorter values
     proof: Optional[str]
     status: RequestStatus
     created_at: datetime

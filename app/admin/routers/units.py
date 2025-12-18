@@ -166,91 +166,6 @@ async def list_all_units(
     ]
 
 
-@router.get("/{unit_id}", response_model=dict)
-async def view_unit_details(
-    unit_id: int,
-    current_user: CustomUser = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_async_db),
-):
-    """View individual unit details."""
-    stmt = select(CustomUser).where(CustomUser.id == unit_id).options(
-        selectinload(CustomUser.unit_name)
-    )
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Unit not found"
-        )
-    
-    # Get officials
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == unit_id)
-    result = await db.execute(stmt)
-    officials = result.scalar_one_or_none()
-    
-    # Get councilors
-    stmt = select(UnitCouncilor).where(UnitCouncilor.registered_user_id == unit_id)
-    result = await db.execute(stmt)
-    councilors = list(result.scalars().all())
-    
-    # Get members
-    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == unit_id)
-    result = await db.execute(stmt)
-    members = list(result.scalars().all())
-    
-    # Convert officials to dict
-    officials_dict = None
-    if officials:
-        officials_dict = {
-            "id": officials.id,
-            "president_designation": officials.president_designation,
-            "president_name": officials.president_name,
-            "president_phone": officials.president_phone,
-            "vice_president_name": officials.vice_president_name,
-            "vice_president_phone": officials.vice_president_phone,
-            "secretary_name": officials.secretary_name,
-            "secretary_phone": officials.secretary_phone,
-            "joint_secretary_name": officials.joint_secretary_name,
-            "joint_secretary_phone": officials.joint_secretary_phone,
-            "treasurer_name": officials.treasurer_name,
-            "treasurer_phone": officials.treasurer_phone,
-        }
-    
-    # Convert councilors to list of dicts
-    councilors_list = [
-        {"id": c.id, "unit_member_id": c.unit_member_id}
-        for c in councilors
-    ]
-    
-    # Convert members to list of dicts
-    members_list = [
-        {
-            "id": m.id,
-            "name": m.name,
-            "gender": m.gender,
-            "dob": m.dob.isoformat() if m.dob else None,
-            "number": m.number,
-            "qualification": m.qualification,
-            "blood_group": m.blood_group,
-        }
-        for m in members
-    ]
-    
-    return {
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "unit_name": user.unit_name.name if user.unit_name else None,
-        },
-        "officials": officials_dict,
-        "councilors": councilors_list,
-        "members": members_list,
-        "member_count": len(members),
-    }
-
-
 # Transfer Request Endpoints
 @router.get("/transfer-requests", response_model=List[UnitTransferRequestResponse])
 async def list_transfer_requests(
@@ -458,4 +373,90 @@ async def reset_password(
     await db.commit()
     
     return {"message": f"Password for user {username} reset successfully"}
+
+
+# Unit Details - MUST be last due to path parameter matching
+@router.get("/{unit_id}", response_model=dict)
+async def view_unit_details(
+    unit_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """View individual unit details."""
+    stmt = select(CustomUser).where(CustomUser.id == unit_id).options(
+        selectinload(CustomUser.unit_name)
+    )
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unit not found"
+        )
+    
+    # Get officials
+    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == unit_id)
+    result = await db.execute(stmt)
+    officials = result.scalar_one_or_none()
+    
+    # Get councilors
+    stmt = select(UnitCouncilor).where(UnitCouncilor.registered_user_id == unit_id)
+    result = await db.execute(stmt)
+    councilors = list(result.scalars().all())
+    
+    # Get members
+    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == unit_id)
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+    
+    # Convert officials to dict
+    officials_dict = None
+    if officials:
+        officials_dict = {
+            "id": officials.id,
+            "president_designation": officials.president_designation,
+            "president_name": officials.president_name,
+            "president_phone": officials.president_phone,
+            "vice_president_name": officials.vice_president_name,
+            "vice_president_phone": officials.vice_president_phone,
+            "secretary_name": officials.secretary_name,
+            "secretary_phone": officials.secretary_phone,
+            "joint_secretary_name": officials.joint_secretary_name,
+            "joint_secretary_phone": officials.joint_secretary_phone,
+            "treasurer_name": officials.treasurer_name,
+            "treasurer_phone": officials.treasurer_phone,
+        }
+    
+    # Convert councilors to list of dicts
+    councilors_list = [
+        {"id": c.id, "unit_member_id": c.unit_member_id}
+        for c in councilors
+    ]
+    
+    # Convert members to list of dicts
+    members_list = [
+        {
+            "id": m.id,
+            "name": m.name,
+            "gender": m.gender,
+            "dob": m.dob.isoformat() if m.dob else None,
+            "number": m.number,
+            "qualification": m.qualification,
+            "blood_group": m.blood_group,
+        }
+        for m in members
+    ]
+    
+    return {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "unit_name": user.unit_name.name if user.unit_name else None,
+        },
+        "officials": officials_dict,
+        "councilors": councilors_list,
+        "members": members_list,
+        "member_count": len(members),
+    }
 
