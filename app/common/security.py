@@ -203,25 +203,25 @@ async def get_current_user(
 ):
     """
     Get current user from access token (async version).
-    
+
     Validates JWT signature and expiration, then fetches user from database.
     Access tokens are stateless (no DB check for token itself).
-    
+
     Args:
         token: JWT token from Authorization header
         db: Async database session
-    
+
     Returns:
         CustomUser object
-    
+
     Raises:
         HTTPException: If user not found or inactive
     """
     from app.auth.models import CustomUser
-    
+
     payload = decode_token(token)
     user_id = int(payload.sub)
-    
+
     # Fetch user from DB
     user = await db.get(CustomUser, user_id)
     if not user or not user.is_active:
@@ -230,7 +230,7 @@ async def get_current_user(
             detail="User not found or inactive",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
+
     return user
 
 

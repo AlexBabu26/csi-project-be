@@ -338,6 +338,41 @@ async def reject_member_add_request(
     return await units_service.reject_member_add_request(db, request_id)
 
 
+# Unit Officials Endpoint
+@router.get("/officials", response_model=List[dict])
+async def list_all_unit_officials(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all unit officials across all units."""
+    stmt = select(UnitOfficials).options(
+        selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name)
+    )
+    result = await db.execute(stmt)
+    officials_list = list(result.scalars().all())
+    
+    return [
+        {
+            "id": officials.id,
+            "registered_user_id": officials.registered_user_id,
+            "unit_name": officials.registered_user.unit_name.name if officials.registered_user and officials.registered_user.unit_name else None,
+            "district": officials.registered_user.unit_name.district.name if officials.registered_user and officials.registered_user.unit_name and officials.registered_user.unit_name.district else None,
+            "president_designation": officials.president_designation,
+            "president_name": officials.president_name,
+            "president_phone": officials.president_phone,
+            "vice_president_name": officials.vice_president_name,
+            "vice_president_phone": officials.vice_president_phone,
+            "secretary_name": officials.secretary_name,
+            "secretary_phone": officials.secretary_phone,
+            "joint_secretary_name": officials.joint_secretary_name,
+            "joint_secretary_phone": officials.joint_secretary_phone,
+            "treasurer_name": officials.treasurer_name,
+            "treasurer_phone": officials.treasurer_phone,
+        }
+        for officials in officials_list
+    ]
+
+
 # Member Management
 @router.delete("/members/{member_id}", response_model=dict)
 async def archive_member(
