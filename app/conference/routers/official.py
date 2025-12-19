@@ -175,13 +175,13 @@ async def view_delegates(
     max_count = current_user.conference_official_count + current_user.conference_member_count
     amount_to_pay = max_count * 300
     
-    # Get payment status
+    # Get payment status (get the latest payment)
     stmt = select(ConferencePayment).where(
         and_(
             ConferencePayment.conference_id == current_user.conference_id,
             ConferencePayment.uploaded_by_id == current_user.id
         )
-    ).order_by(ConferencePayment.date.desc())
+    ).order_by(ConferencePayment.date.desc()).limit(1)
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
     
