@@ -105,9 +105,11 @@ class ConferencePaymentBase(BaseModel):
     amount_to_pay: Optional[float] = Field(None, gt=0)
 
 
-class ConferencePaymentCreate(ConferencePaymentBase):
+class ConferencePaymentCreate(BaseModel):
     """Create schema for conference payments."""
     
+    conference_id: Optional[int] = Field(None, gt=0)  # Optional - set from user session
+    amount_to_pay: Optional[float] = Field(None, ge=0)
     proof_path: Optional[str] = Field(None, description="File path to payment proof")
     payment_reference: Optional[str] = Field(None, description="Payment reference number")
     status: PaymentStatus = Field(default=PaymentStatus.PENDING)

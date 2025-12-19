@@ -20,6 +20,7 @@ from app.conference.models import (
     ConferenceDelegate,
     ConferencePayment,
     FoodPreference,
+    PaymentStatusEnum,
 )
 from app.conference.schemas import (
     ConferenceCreate,
@@ -474,7 +475,7 @@ async def create_conference_payment(
         uploaded_by_id=user_id,
         proof_path=data.proof_path,
         payment_reference=data.payment_reference,
-        status=data.status.value if data.proof_path else "NOT PAID",
+        status=PaymentStatusEnum.PROOF_UPLOADED if data.proof_path else PaymentStatusEnum.PENDING,
     )
     
     db.add(payment)

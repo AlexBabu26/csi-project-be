@@ -2,11 +2,20 @@
 
 from datetime import datetime
 from typing import Optional
+import enum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
+
+
+class PaymentStatusEnum(str, enum.Enum):
+    """Payment status enum matching database type."""
+    PENDING = "PENDING"
+    PROOF_UPLOADED = "PROOF_UPLOADED"
+    PAID = "PAID"
+    DECLINED = "DECLINED"
 
 
 class Conference(Base):
@@ -68,7 +77,10 @@ class ConferencePayment(Base):
     )
     proof_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # File path
     date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # PAID, NOT PAID, PENDING
+    status: Mapped[Optional[PaymentStatusEnum]] = mapped_column(
+        Enum(PaymentStatusEnum, name='paymentstatus', create_type=False),
+        nullable=True
+    )
     payment_reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 
