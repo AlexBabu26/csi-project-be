@@ -106,7 +106,11 @@ async def select_individual_event(
     units = list(result.scalars().all())
     
     return {
-        "event": event,
+        "event": {
+            "id": event.id,
+            "name": event.name,
+            "description": event.description,
+        },
         "members": [
             {
                 "id": m.id,
@@ -134,7 +138,13 @@ async def add_individual_participant(
     
     return {
         "message": "Participant added successfully",
-        "participation": participation,
+        "participation": {
+            "id": participation.id,
+            "individual_event_id": participation.individual_event_id,
+            "participant_id": participation.participant_id,
+            "chest_number": participation.chest_number,
+            "seniority_category": participation.seniority_category.value if participation.seniority_category else None,
+        },
     }
 
 
@@ -234,7 +244,14 @@ async def select_group_event(
     remaining_slots = event.max_allowed_limit - current_team_size
     
     return {
-        "event": event,
+        "event": {
+            "id": event.id,
+            "name": event.name,
+            "description": event.description,
+            "max_allowed_limit": event.max_allowed_limit,
+            "min_allowed_limit": event.min_allowed_limit,
+            "per_unit_allowed_limit": event.per_unit_allowed_limit,
+        },
         "members": [
             {
                 "id": m.id,
@@ -265,7 +282,15 @@ async def add_group_participants(
     
     return {
         "message": f"Added {len(participations)} participants successfully",
-        "participations": participations,
+        "participations": [
+            {
+                "id": p.id,
+                "group_event_id": p.group_event_id,
+                "participant_id": p.participant_id,
+                "chest_number": p.chest_number,
+            }
+            for p in participations
+        ],
     }
 
 

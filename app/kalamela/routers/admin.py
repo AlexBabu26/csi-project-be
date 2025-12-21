@@ -1273,7 +1273,20 @@ async def view_individual_scores(
         scores = list(result.scalars().all())
         
         if scores:
-            results_dict[event_name] = scores
+            results_dict[event_name] = [
+                {
+                    "id": s.id,
+                    "event_participation_id": s.event_participation_id,
+                    "participant_id": s.participant_id,
+                    "awarded_mark": s.awarded_mark,
+                    "grade": s.grade,
+                    "total_points": s.total_points,
+                    "added_on": s.added_on.isoformat() if s.added_on else None,
+                    "chest_number": s.participation.chest_number if s.participation else None,
+                    "participant_name": s.participant.name if s.participant else None,
+                }
+                for s in scores
+            ]
     
     return {"results_dict": results_dict}
 
@@ -1299,7 +1312,18 @@ async def view_group_scores(
         scores = list(result.scalars().all())
         
         if scores:
-            results_dict[event_name] = scores
+            results_dict[event_name] = [
+                {
+                    "id": s.id,
+                    "event_name": s.event_name,
+                    "chest_number": s.chest_number,
+                    "awarded_mark": s.awarded_mark,
+                    "grade": s.grade,
+                    "total_points": s.total_points,
+                    "added_on": s.added_on.isoformat() if s.added_on else None,
+                }
+                for s in scores
+            ]
     
     return {"results_dict": results_dict}
 
@@ -1348,7 +1372,20 @@ async def get_scores_for_event(
     
     return {
         "event_name": event_name,
-        "event_scores": scores,
+        "event_scores": [
+            {
+                "id": s.id,
+                "event_participation_id": s.event_participation_id,
+                "participant_id": s.participant_id,
+                "awarded_mark": s.awarded_mark,
+                "grade": s.grade,
+                "total_points": s.total_points,
+                "added_on": s.added_on.isoformat() if s.added_on else None,
+                "chest_number": s.participation.chest_number if s.participation else None,
+                "participant_name": s.participant.name if s.participant else None,
+            }
+            for s in scores
+        ],
     }
 
 
@@ -1367,7 +1404,18 @@ async def get_group_scores_for_event(
     
     return {
         "event_name": event_name,
-        "event_scores": scores,
+        "event_scores": [
+            {
+                "id": s.id,
+                "event_name": s.event_name,
+                "chest_number": s.chest_number,
+                "awarded_mark": s.awarded_mark,
+                "grade": s.grade,
+                "total_points": s.total_points,
+                "added_on": s.added_on.isoformat() if s.added_on else None,
+            }
+            for s in scores
+        ],
     }
 
 
@@ -1439,7 +1487,16 @@ async def get_unit_wise_results(
         
         if scores:
             results_dict[unit.name] = [{
-                "unit_results": scores
+                "unit_results": [
+                    {
+                        "id": s.id,
+                        "participant_id": s.participant_id,
+                        "awarded_mark": s.awarded_mark,
+                        "grade": s.grade,
+                        "total_points": s.total_points,
+                    }
+                    for s in scores
+                ]
             }]
     
     return {"results_dict": results_dict}
@@ -1476,7 +1533,16 @@ async def get_district_wise_results(
         
         if scores:
             results_dict[district.name] = [{
-                "district_results": scores,
+                "district_results": [
+                    {
+                        "id": s.id,
+                        "participant_id": s.participant_id,
+                        "awarded_mark": s.awarded_mark,
+                        "grade": s.grade,
+                        "total_points": s.total_points,
+                    }
+                    for s in scores
+                ],
                 "total_points": total_points,
             }]
     

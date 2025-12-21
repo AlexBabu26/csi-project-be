@@ -52,7 +52,9 @@ async def list_all_individual_events(
     
     Returns dict grouped by category.
     """
-    stmt = select(IndividualEvent).order_by(IndividualEvent.category, IndividualEvent.name)
+    stmt = select(IndividualEvent).options(
+        selectinload(IndividualEvent.event_category)
+    ).order_by(IndividualEvent.category_id, IndividualEvent.name)
     result = await db.execute(stmt)
     events = list(result.scalars().all())
     
@@ -73,12 +75,19 @@ async def list_all_individual_events(
         
         remaining_slots = max(0, 2 - count)
         
-        category = event.category or "Uncategorized"
+        category = event.event_category.name if event.event_category else "Uncategorized"
         if category not in event_dict:
             event_dict[category] = []
         
         event_dict[category].append({
-            "event": event,
+            "event": {
+                "id": event.id,
+                "name": event.name,
+                "description": event.description,
+                "category_id": event.category_id,
+                "category_name": event.event_category.name if event.event_category else None,
+                "registration_fee_id": event.registration_fee_id,
+            },
             "participation_count": count,
             "remaining_slots": remaining_slots,
         })
@@ -89,9 +98,11 @@ async def list_all_individual_events(
 async def list_all_group_events(
     db: AsyncSession,
     user: CustomUser,
-) -> Dict[GroupEvent, List[Dict]]:
+) -> Dict[str, Dict]:
     """List all group events with team counts per district/unit."""
-    stmt = select(GroupEvent).order_by(GroupEvent.name)
+    stmt = select(GroupEvent).options(
+        selectinload(GroupEvent.registration_fee)
+    ).order_by(GroupEvent.name)
     result = await db.execute(stmt)
     events = list(result.scalars().all())
     
@@ -112,11 +123,17 @@ async def list_all_group_events(
         result_count = await db.execute(stmt_count)
         count = result_count.scalar() or 0
         
-        group_events_dict[event] = [{
+        # Use event name as key and serialize event data
+        group_events_dict[event.name] = {
             "id": event.id,
             "name": event.name,
+            "description": event.description,
+            "max_allowed_limit": event.max_allowed_limit,
+            "min_allowed_limit": event.min_allowed_limit,
+            "per_unit_allowed_limit": event.per_unit_allowed_limit,
+            "registration_fee_id": event.registration_fee_id,
             "count": count,
-        }]
+        }
     
     return group_events_dict
 
@@ -1186,7 +1203,16 @@ async def get_district_statistics(
         "group_event_amount": group_amount,
         "total_amount_to_pay": total_amount,
         "payment_status": payment.payment_status.value if payment else None,
-        "payment": payment,
+        "payment": {
+            "id": payment.id,
+            "paid_by_id": payment.paid_by_id,
+            "individual_events_count": payment.individual_events_count,
+            "group_events_count": payment.group_events_count,
+            "total_amount_to_pay": payment.total_amount_to_pay,
+            "payment_proof_path": payment.payment_proof_path,
+            "payment_status": payment.payment_status.value if payment.payment_status else None,
+            "created_on": payment.created_on.isoformat() if payment.created_on else None,
+        } if payment else None,
     }
 
 
