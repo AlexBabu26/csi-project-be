@@ -1,7 +1,8 @@
 """Kalamela official router - district official functionalities."""
 
+from datetime import date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +16,8 @@ from app.kalamela.models import (
     IndividualEventParticipation,
     GroupEventParticipation,
     KalamelaPayments,
+    KalamelaExcludeMembers,
+    SeniorityCategory,
 )
 from app.kalamela.schemas import (
     IndividualParticipationCreate,
@@ -24,6 +27,12 @@ from app.kalamela.schemas import (
     KalamelaPaymentResponse,
 )
 from app.kalamela import service as kalamela_service
+
+# Seniority date ranges (from service.py)
+JUNIOR_DOB_START = date(2004, 1, 12)
+JUNIOR_DOB_END = date(2010, 6, 30)
+SENIOR_DOB_START = date(1989, 7, 1)
+SENIOR_DOB_END = date(2004, 1, 11)
 
 router = APIRouter()
 
@@ -38,6 +47,145 @@ async def get_official_user(
             detail="Access denied. District official privileges required."
         )
     return current_user
+
+
+def get_participation_category(dob: Optional[date]) -> str:
+    """Determine participation category (Junior/Senior) based on date of birth."""
+    if not dob:
+        return "Unknown"
+    
+    if JUNIOR_DOB_START <= dob <= JUNIOR_DOB_END:
+        return "Junior"
+    elif SENIOR_DOB_START <= dob <= SENIOR_DOB_END:
+        return "Senior"
+    else:
+        return "Ineligible"
+
+
+def calculate_age(dob: Optional[date]) -> Optional[int]:
+    """Calculate age from date of birth."""
+    if not dob:
+        return None
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+# District Members
+@router.get("/district-members", response_model=dict)
+async def list_district_members(
+    unit_id: Optional[int] = Query(None, description="Filter by specific unit ID"),
+    participation_category: Optional[str] = Query(
+        None, 
+        description="Filter by participation category: 'Junior', 'Senior', or 'Ineligible'"
+    ),
+    search: Optional[str] = Query(None, description="Search by member name"),
+    current_user: CustomUser = Depends(get_official_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    List all unit members within the logged-in district official's district.
+    
+    Returns:
+    - id: Unit member ID
+    - name: Full name
+    - phone_number: Contact number
+    - dob: Date of birth
+    - age: Calculated age
+    - gender: Gender (M/F)
+    - unit_id: Unit ID
+    - unit_name: Name of the unit
+    - participation_category: Junior, Senior, or Ineligible (based on DOB ranges)
+    - is_excluded: Whether the member is excluded from Kalamela
+    
+    Filters:
+    - unit_id: Filter by specific unit
+    - participation_category: Filter by Junior/Senior/Ineligible
+    - search: Search by member name (case-insensitive)
+    """
+    # Base query - get all members from units in this district
+    stmt = select(UnitMembers).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
+    ).join(
+        UnitName, CustomUser.unit_name_id == UnitName.id
+    ).where(
+        UnitName.clergy_district_id == current_user.clergy_district_id
+    ).options(
+        selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name)
+    )
+    
+    # Filter by unit if provided
+    if unit_id:
+        stmt = stmt.where(CustomUser.unit_name_id == unit_id)
+    
+    # Filter by search term
+    if search:
+        stmt = stmt.where(UnitMembers.name.ilike(f"%{search}%"))
+    
+    stmt = stmt.order_by(UnitName.name, UnitMembers.name)
+    
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+    
+    # Get excluded member IDs
+    stmt_excluded = select(KalamelaExcludeMembers.members_id)
+    result_excluded = await db.execute(stmt_excluded)
+    excluded_ids = set(row[0] for row in result_excluded.all())
+    
+    # Build response with calculated fields
+    members_list = []
+    for member in members:
+        category = get_participation_category(member.dob)
+        
+        # Apply participation category filter if provided
+        if participation_category and category.lower() != participation_category.lower():
+            continue
+        
+        age = calculate_age(member.dob)
+        unit_name = member.registered_user.unit_name.name if member.registered_user and member.registered_user.unit_name else None
+        unit_id_val = member.registered_user.unit_name_id if member.registered_user else None
+        
+        members_list.append({
+            "id": member.id,
+            "name": member.name,
+            "phone_number": member.number,
+            "dob": member.dob.isoformat() if member.dob else None,
+            "age": age,
+            "gender": member.gender,
+            "unit_id": unit_id_val,
+            "unit_name": unit_name,
+            "participation_category": category,
+            "is_excluded": member.id in excluded_ids,
+        })
+    
+    # Get units for filter dropdown
+    stmt_units = select(UnitName).where(
+        UnitName.clergy_district_id == current_user.clergy_district_id
+    ).order_by(UnitName.name)
+    result_units = await db.execute(stmt_units)
+    units = list(result_units.scalars().all())
+    
+    # Summary counts
+    junior_count = sum(1 for m in members_list if m["participation_category"] == "Junior")
+    senior_count = sum(1 for m in members_list if m["participation_category"] == "Senior")
+    ineligible_count = sum(1 for m in members_list if m["participation_category"] == "Ineligible")
+    excluded_count = sum(1 for m in members_list if m["is_excluded"])
+    
+    return {
+        "members": members_list,
+        "total_count": len(members_list),
+        "summary": {
+            "junior_count": junior_count,
+            "senior_count": senior_count,
+            "ineligible_count": ineligible_count,
+            "excluded_count": excluded_count,
+        },
+        "units": [{"id": u.id, "name": u.name} for u in units],
+        "filters_applied": {
+            "unit_id": unit_id,
+            "participation_category": participation_category,
+            "search": search,
+        },
+    }
 
 
 # Home
