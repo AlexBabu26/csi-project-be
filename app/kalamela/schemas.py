@@ -35,6 +35,12 @@ class EventType(str, Enum):
     GROUP = "group"
 
 
+class GenderRestriction(str, Enum):
+    """Gender restriction for events."""
+    MALE = "Male"
+    FEMALE = "Female"
+
+
 # Registration Fee Schemas
 class RegistrationFeeCreate(BaseModel):
     """Create schema for registration fee."""
@@ -96,6 +102,8 @@ class IndividualEventCreate(BaseModel):
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
     is_mandatory: bool = Field(default=False, description="Whether this event is mandatory")
+    gender_restriction: Optional[GenderRestriction] = Field(None, description="Gender restriction: Male, Female, or null for any")
+    seniority_restriction: Optional[SeniorityCategory] = Field(None, description="Seniority restriction: Junior, Senior, or null for any")
 
 
 class IndividualEventUpdate(BaseModel):
@@ -105,6 +113,8 @@ class IndividualEventUpdate(BaseModel):
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
     is_mandatory: Optional[bool] = Field(None, description="Whether this event is mandatory")
+    gender_restriction: Optional[GenderRestriction] = Field(None, description="Gender restriction: Male, Female, or null for any")
+    seniority_restriction: Optional[SeniorityCategory] = Field(None, description="Seniority restriction: Junior, Senior, or null for any")
 
 
 class IndividualEventResponse(BaseModel):
@@ -119,6 +129,8 @@ class IndividualEventResponse(BaseModel):
     registration_fee_amount: Optional[int] = None
     description: Optional[str]
     is_mandatory: bool
+    gender_restriction: Optional[GenderRestriction] = None
+    seniority_restriction: Optional[str] = None
     created_on: datetime
 
 
@@ -129,6 +141,8 @@ class GroupEventCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=1000)
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     is_mandatory: bool = Field(default=False, description="Whether this event is mandatory")
+    gender_restriction: Optional[GenderRestriction] = Field(None, description="Gender restriction: Male, Female, or null for any")
+    seniority_restriction: Optional[SeniorityCategory] = Field(None, description="Seniority restriction: Junior, Senior, or null for any")
     max_allowed_limit: int = Field(default=2, ge=1)
     min_allowed_limit: int = Field(default=1, ge=1)
     per_unit_allowed_limit: int = Field(default=1, ge=1)
@@ -141,6 +155,8 @@ class GroupEventUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=1000)
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     is_mandatory: Optional[bool] = Field(None, description="Whether this event is mandatory")
+    gender_restriction: Optional[GenderRestriction] = Field(None, description="Gender restriction: Male, Female, or null for any")
+    seniority_restriction: Optional[SeniorityCategory] = Field(None, description="Seniority restriction: Junior, Senior, or null for any")
     max_allowed_limit: Optional[int] = Field(None, ge=1)
     min_allowed_limit: Optional[int] = Field(None, ge=1)
     per_unit_allowed_limit: Optional[int] = Field(None, ge=1)
@@ -158,6 +174,8 @@ class GroupEventResponse(BaseModel):
     registration_fee_id: Optional[int]
     registration_fee_amount: Optional[int] = None
     is_mandatory: bool
+    gender_restriction: Optional[GenderRestriction] = None
+    seniority_restriction: Optional[str] = None
     max_allowed_limit: int
     min_allowed_limit: int
     per_unit_allowed_limit: int

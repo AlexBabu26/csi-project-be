@@ -14,6 +14,13 @@ class SeniorityCategory(str, enum.Enum):
     SENIOR = "Senior"
 
 
+class GenderRestriction(str, enum.Enum):
+    """Gender restrictions for events."""
+    MALE = "Male"
+    FEMALE = "Female"
+    # NULL means no gender restriction (open to all)
+
+
 class RuleCategory(str, enum.Enum):
     """Categories for Kalamela rules."""
     AGE_RESTRICTION = "age_restriction"
@@ -92,6 +99,14 @@ class IndividualEvent(Base):
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    gender_restriction: Mapped[Optional[GenderRestriction]] = mapped_column(
+        SAEnum(GenderRestriction, values_callable=lambda x: [e.value for e in x]),
+        nullable=True
+    )
+    seniority_restriction: Mapped[Optional[SeniorityCategory]] = mapped_column(
+        SAEnum(SeniorityCategory, values_callable=lambda x: [e.value for e in x], name='seniority_restriction_enum'),
+        nullable=True
+    )
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -115,6 +130,14 @@ class GroupEvent(Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    gender_restriction: Mapped[Optional[GenderRestriction]] = mapped_column(
+        SAEnum(GenderRestriction, values_callable=lambda x: [e.value for e in x], name='group_gender_restriction_enum'),
+        nullable=True
+    )
+    seniority_restriction: Mapped[Optional[SeniorityCategory]] = mapped_column(
+        SAEnum(SeniorityCategory, values_callable=lambda x: [e.value for e in x], name='group_seniority_restriction_enum'),
+        nullable=True
+    )
     max_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
     min_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
     per_unit_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
