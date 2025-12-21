@@ -95,6 +95,7 @@ class IndividualEventCreate(BaseModel):
     category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
+    is_mandatory: bool = Field(default=False, description="Whether this event is mandatory")
 
 
 class IndividualEventUpdate(BaseModel):
@@ -103,6 +104,7 @@ class IndividualEventUpdate(BaseModel):
     category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
+    is_mandatory: Optional[bool] = Field(None, description="Whether this event is mandatory")
 
 
 class IndividualEventResponse(BaseModel):
@@ -116,24 +118,29 @@ class IndividualEventResponse(BaseModel):
     registration_fee_id: Optional[int]
     registration_fee_amount: Optional[int] = None
     description: Optional[str]
+    is_mandatory: bool
     created_on: datetime
 
 
 class GroupEventCreate(BaseModel):
     """Create schema for group events."""
     name: str = Field(..., min_length=1, max_length=255)
+    category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
     description: Optional[str] = Field(None, max_length=1000)
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
+    is_mandatory: bool = Field(default=False, description="Whether this event is mandatory")
     max_allowed_limit: int = Field(default=2, ge=1)
     min_allowed_limit: int = Field(default=1, ge=1)
-    per_unit_allowed_limit: int = Field(default=2, ge=1)
+    per_unit_allowed_limit: int = Field(default=1, ge=1)
 
 
 class GroupEventUpdate(BaseModel):
     """Update schema for group events."""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
+    category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
     description: Optional[str] = Field(None, max_length=1000)
     registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
+    is_mandatory: Optional[bool] = Field(None, description="Whether this event is mandatory")
     max_allowed_limit: Optional[int] = Field(None, ge=1)
     min_allowed_limit: Optional[int] = Field(None, ge=1)
     per_unit_allowed_limit: Optional[int] = Field(None, ge=1)
@@ -145,9 +152,12 @@ class GroupEventResponse(BaseModel):
     
     id: int
     name: str
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
     description: Optional[str]
     registration_fee_id: Optional[int]
     registration_fee_amount: Optional[int] = None
+    is_mandatory: bool
     max_allowed_limit: int
     min_allowed_limit: int
     per_unit_allowed_limit: int

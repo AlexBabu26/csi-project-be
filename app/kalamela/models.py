@@ -91,6 +91,7 @@ class IndividualEvent(Base):
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("event_category.id"), nullable=True)
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -110,14 +111,17 @@ class GroupEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("event_category.id"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     max_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
     min_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
-    per_unit_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
+    per_unit_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
+    event_category: Mapped[Optional["EventCategory"]] = relationship("EventCategory")
     registration_fee: Mapped[Optional["RegistrationFee"]] = relationship(
         "RegistrationFee", back_populates="group_events"
     )
