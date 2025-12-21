@@ -25,21 +25,162 @@ from app.kalamela.models import (
     SeniorityCategory,
     PaymentStatus,
     AppealStatus,
+    KalamelaRules,
 )
 from app.kalamela import schemas as kala_schema
 from app.common.storage import save_upload_file
 
 
-# Constants
+# =============================================================================
+# Rules Management - Database-driven configuration
+# =============================================================================
+
+# Cache for rules to avoid repeated DB queries
+_rules_cache: Dict[str, Any] = {}
+_rules_cache_timestamp: Optional[datetime] = None
+RULES_CACHE_TTL = timedelta(minutes=5)  # Cache TTL of 5 minutes
+
+
+async def get_kalamela_rules(db: AsyncSession, force_refresh: bool = False) -> Dict[str, str]:
+    """
+    Fetch all active Kalamela rules from database.
+    
+    Uses caching to avoid repeated DB queries. Cache expires after 5 minutes.
+    
+    Returns:
+        Dict with rule_key as key and rule_value as value
+    """
+    global _rules_cache, _rules_cache_timestamp
+    
+    # Check if cache is valid
+    if (not force_refresh 
+        and _rules_cache 
+        and _rules_cache_timestamp 
+        and datetime.utcnow() - _rules_cache_timestamp < RULES_CACHE_TTL):
+        return _rules_cache
+    
+    # Fetch from database
+    stmt = select(KalamelaRules).where(KalamelaRules.is_active == True)
+    result = await db.execute(stmt)
+    rules = result.scalars().all()
+    
+    # Build cache
+    _rules_cache = {rule.rule_key: rule.rule_value for rule in rules}
+    _rules_cache_timestamp = datetime.utcnow()
+    
+    return _rules_cache
+
+
+async def get_rule_value(db: AsyncSession, rule_key: str, default: Any = None) -> Any:
+    """
+    Get a specific rule value by key.
+    
+    Args:
+        db: Database session
+        rule_key: The key of the rule to fetch
+        default: Default value if rule not found
+    
+    Returns:
+        The rule value or default
+    """
+    rules = await get_kalamela_rules(db)
+    return rules.get(rule_key, default)
+
+
+async def get_age_restrictions(db: AsyncSession) -> Dict[str, date]:
+    """
+    Get age restriction rules as date objects.
+    
+    Returns:
+        Dict with keys: senior_dob_start, senior_dob_end, junior_dob_start, junior_dob_end
+    """
+    rules = await get_kalamela_rules(db)
+    
+    return {
+        "senior_dob_start": date.fromisoformat(rules.get("senior_dob_start", "1991-01-11")),
+        "senior_dob_end": date.fromisoformat(rules.get("senior_dob_end", "2005-01-10")),
+        "junior_dob_start": date.fromisoformat(rules.get("junior_dob_start", "2005-01-11")),
+        "junior_dob_end": date.fromisoformat(rules.get("junior_dob_end", "2011-06-30")),
+    }
+
+
+async def get_participation_limits(db: AsyncSession) -> Dict[str, int]:
+    """
+    Get participation limit rules as integers.
+    
+    Returns:
+        Dict with keys: max_individual_events_per_person, max_participants_per_unit_per_event, 
+                       max_groups_per_unit_per_group_event
+    """
+    rules = await get_kalamela_rules(db)
+    
+    return {
+        "max_individual_events_per_person": int(rules.get("max_individual_events_per_person", "5")),
+        "max_participants_per_unit_per_event": int(rules.get("max_participants_per_unit_per_event", "2")),
+        "max_groups_per_unit_per_group_event": int(rules.get("max_groups_per_unit_per_group_event", "1")),
+    }
+
+
+async def get_fee_config(db: AsyncSession) -> Dict[str, int]:
+    """
+    Get fee configuration rules as integers.
+    
+    Returns:
+        Dict with keys: individual_event_fee, group_event_fee, appeal_fee
+    """
+    rules = await get_kalamela_rules(db)
+    
+    return {
+        "individual_event_fee": int(rules.get("individual_event_fee", "50")),
+        "group_event_fee": int(rules.get("group_event_fee", "100")),
+        "appeal_fee": int(rules.get("appeal_fee", "1000")),
+    }
+
+
+def get_participation_category_from_dob(
+    dob: Optional[date],
+    age_restrictions: Dict[str, date]
+) -> str:
+    """
+    Determine participation category (Junior/Senior/Ineligible) based on DOB.
+    
+    Args:
+        dob: Date of birth
+        age_restrictions: Dict with senior_dob_start, senior_dob_end, junior_dob_start, junior_dob_end
+    
+    Returns:
+        "Junior", "Senior", "Ineligible", or "Unknown"
+    """
+    if not dob:
+        return "Unknown"
+    
+    if age_restrictions["junior_dob_start"] <= dob <= age_restrictions["junior_dob_end"]:
+        return "Junior"
+    elif age_restrictions["senior_dob_start"] <= dob <= age_restrictions["senior_dob_end"]:
+        return "Senior"
+    else:
+        return "Ineligible"
+
+
+def invalidate_rules_cache():
+    """Invalidate the rules cache to force a refresh on next access."""
+    global _rules_cache, _rules_cache_timestamp
+    _rules_cache = {}
+    _rules_cache_timestamp = None
+
+
+# Legacy constants - kept for backward compatibility but should use DB rules
+# These are fallback defaults if DB is not available
 INDIVIDUAL_FEE = 50
 GROUP_FEE = 100
 APPEAL_FEE = 1000
 
-# Age range definitions
-JUNIOR_DOB_START = date(2004, 1, 12)
-JUNIOR_DOB_END = date(2010, 6, 30)
-SENIOR_DOB_START = date(1989, 7, 1)
-SENIOR_DOB_END = date(2004, 1, 11)
+# Legacy age range definitions - kept for backward compatibility
+# These are fallback defaults if DB is not available
+JUNIOR_DOB_START = date(2005, 1, 11)
+JUNIOR_DOB_END = date(2011, 6, 30)
+SENIOR_DOB_START = date(1991, 1, 11)
+SENIOR_DOB_END = date(2005, 1, 10)
 
 
 # Event Management Functions
@@ -151,10 +292,13 @@ async def individual_event_members_data(
     - District
     - Unit (optional)
     - Gender (from event name: boys/girls)
-    - Age/DOB (from event name: junior/senior)
+    - Age/DOB (from event name: junior/senior) - using DB rules
     - Not excluded
     - Not already registered for this event
     """
+    # Get age restrictions from database
+    age_restrictions = await get_age_restrictions(db)
+    
     # Get excluded members
     stmt_excluded = select(KalamelaExcludeMembers.members_id)
     result_excluded = await db.execute(stmt_excluded)
@@ -198,19 +342,19 @@ async def individual_event_members_data(
     elif "girls" in event_name_lower:
         stmt = stmt.where(UnitMembers.gender == "F")
     
-    # Age filtering
+    # Age filtering using database rules
     if "junior" in event_name_lower:
         stmt = stmt.where(
             and_(
-                UnitMembers.dob >= JUNIOR_DOB_START,
-                UnitMembers.dob <= JUNIOR_DOB_END
+                UnitMembers.dob >= age_restrictions["junior_dob_start"],
+                UnitMembers.dob <= age_restrictions["junior_dob_end"]
             )
         )
     elif "senior" in event_name_lower:
         stmt = stmt.where(
             and_(
-                UnitMembers.dob >= SENIOR_DOB_START,
-                UnitMembers.dob <= SENIOR_DOB_END
+                UnitMembers.dob >= age_restrictions["senior_dob_start"],
+                UnitMembers.dob <= age_restrictions["senior_dob_end"]
             )
         )
     
@@ -374,13 +518,20 @@ async def add_individual_participant(
     Add individual participant with validation.
     
     Validates:
-    - Max 5 events per person
-    - Max 2 per district per event per seniority
+    - Max events per person (from DB rules)
+    - Max participants per unit per event (from DB rules)
     - Not excluded
     - Not already registered
     """
+    # Get participation limits from database
+    limits = await get_participation_limits(db)
+    max_events_per_person = limits["max_individual_events_per_person"]
+    max_per_unit_per_event = limits["max_participants_per_unit_per_event"]
+    
     # Get member
-    stmt = select(UnitMembers).where(UnitMembers.id == data.participant_id)
+    stmt = select(UnitMembers).where(UnitMembers.id == data.participant_id).options(
+        selectinload(UnitMembers.registered_user)
+    )
     result = await db.execute(stmt)
     member = result.scalar_one_or_none()
     
@@ -401,20 +552,42 @@ async def add_individual_participant(
             detail="Participant is excluded from events"
         )
     
-    # Check participant event count (max 5)
+    # Check participant event count (max from DB rules)
     stmt = select(func.count()).select_from(IndividualEventParticipation).where(
         IndividualEventParticipation.participant_id == member.id
     )
     result = await db.execute(stmt)
     event_count = result.scalar() or 0
     
-    if event_count >= 5:
+    if event_count >= max_events_per_person:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Participant already registered for 5 individual events"
+            detail=f"Participant already registered for {max_events_per_person} individual events (maximum allowed)"
         )
     
-    # Check district quota (max 2 per event per seniority)
+    # Check unit quota (max participants per unit per event from DB rules)
+    member_unit_id = member.registered_user.unit_name_id if member.registered_user else None
+    if member_unit_id:
+        stmt = select(func.count()).select_from(IndividualEventParticipation).join(
+            UnitMembers, IndividualEventParticipation.participant_id == UnitMembers.id
+        ).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).where(
+            and_(
+                IndividualEventParticipation.individual_event_id == data.individual_event_id,
+                CustomUser.unit_name_id == member_unit_id
+            )
+        )
+        result = await db.execute(stmt)
+        unit_count = result.scalar() or 0
+        
+        if unit_count >= max_per_unit_per_event:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unit quota reached for this event (max {max_per_unit_per_event} participants per unit)"
+            )
+    
+    # Check district quota (max 2 per event per seniority - keeping this as is)
     stmt = select(func.count()).select_from(IndividualEventParticipation).join(
         CustomUser, IndividualEventParticipation.added_by_id == CustomUser.id
     ).where(
@@ -483,10 +656,14 @@ async def add_group_participants(
     
     Validates:
     - Team limits
-    - Max 2 teams per district per event
+    - Max groups per unit per event (from DB rules)
     - Per-unit limits
     - Same-unit team detection
     """
+    # Get participation limits from database
+    limits = await get_participation_limits(db)
+    max_groups_per_unit = limits["max_groups_per_unit_per_group_event"]
+    
     # Get event
     stmt = select(GroupEvent).where(GroupEvent.id == data.group_event_id)
     result = await db.execute(stmt)
@@ -534,19 +711,21 @@ async def add_group_participants(
             detail="Some participants are excluded from events"
         )
     
-    # Check district team count (max 2 teams per event)
+    # Check unit group count for this event (max groups per unit from DB rules)
     stmt = select(func.count(func.distinct(GroupEventParticipation.chest_number))).select_from(
         GroupEventParticipation
     ).join(
-        CustomUser, GroupEventParticipation.added_by_id == CustomUser.id
+        UnitMembers, GroupEventParticipation.participant_id == UnitMembers.id
+    ).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
     ).where(
         and_(
             GroupEventParticipation.group_event_id == event.id,
-            CustomUser.clergy_district_id == user.clergy_district_id
+            CustomUser.unit_name_id == unit_id
         )
     )
     result = await db.execute(stmt)
-    team_count = result.scalar() or 0
+    unit_group_count = result.scalar() or 0
     
     # Check if adding to existing team or new team
     stmt = select(GroupEventParticipation.chest_number).join(
@@ -562,10 +741,10 @@ async def add_group_participants(
     result = await db.execute(stmt)
     existing_chest = result.scalar_one_or_none()
     
-    if not existing_chest and team_count >= 2:
+    if not existing_chest and unit_group_count >= max_groups_per_unit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="District quota reached (max 2 teams per event)"
+            detail=f"Unit quota reached (max {max_groups_per_unit} group(s) per unit per event)"
         )
     
     # Check if any already registered

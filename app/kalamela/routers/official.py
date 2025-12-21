@@ -17,7 +17,6 @@ from app.kalamela.models import (
     GroupEventParticipation,
     KalamelaPayments,
     KalamelaExcludeMembers,
-    SeniorityCategory,
 )
 from app.kalamela.schemas import (
     IndividualParticipationCreate,
@@ -27,12 +26,6 @@ from app.kalamela.schemas import (
     KalamelaPaymentResponse,
 )
 from app.kalamela import service as kalamela_service
-
-# Seniority date ranges (from service.py)
-JUNIOR_DOB_START = date(2004, 1, 12)
-JUNIOR_DOB_END = date(2010, 6, 30)
-SENIOR_DOB_START = date(1989, 7, 1)
-SENIOR_DOB_END = date(2004, 1, 11)
 
 router = APIRouter()
 
@@ -47,19 +40,6 @@ async def get_official_user(
             detail="Access denied. District official privileges required."
         )
     return current_user
-
-
-def get_participation_category(dob: Optional[date]) -> str:
-    """Determine participation category (Junior/Senior) based on date of birth."""
-    if not dob:
-        return "Unknown"
-    
-    if JUNIOR_DOB_START <= dob <= JUNIOR_DOB_END:
-        return "Junior"
-    elif SENIOR_DOB_START <= dob <= SENIOR_DOB_END:
-        return "Senior"
-    else:
-        return "Ineligible"
 
 
 def calculate_age(dob: Optional[date]) -> Optional[int]:
@@ -94,7 +74,7 @@ async def list_district_members(
     - gender: Gender (M/F)
     - unit_id: Unit ID
     - unit_name: Name of the unit
-    - participation_category: Junior, Senior, or Ineligible (based on DOB ranges)
+    - participation_category: Junior, Senior, or Ineligible (based on DOB ranges from DB rules)
     - is_excluded: Whether the member is excluded from Kalamela
     
     Filters:
@@ -102,6 +82,9 @@ async def list_district_members(
     - participation_category: Filter by Junior/Senior/Ineligible
     - search: Search by member name (case-insensitive)
     """
+    # Get age restrictions from database rules
+    age_restrictions = await kalamela_service.get_age_restrictions(db)
+    
     # Base query - get all members from units in this district
     stmt = select(UnitMembers).join(
         CustomUser, UnitMembers.registered_user_id == CustomUser.id
@@ -131,10 +114,13 @@ async def list_district_members(
     result_excluded = await db.execute(stmt_excluded)
     excluded_ids = set(row[0] for row in result_excluded.all())
     
-    # Build response with calculated fields
+    # Build response with calculated fields using DB rules
     members_list = []
     for member in members:
-        category = get_participation_category(member.dob)
+        # Use service function for category determination
+        category = kalamela_service.get_participation_category_from_dob(
+            member.dob, age_restrictions
+        )
         
         # Apply participation category filter if provided
         if participation_category and category.lower() != participation_category.lower():
@@ -170,6 +156,9 @@ async def list_district_members(
     ineligible_count = sum(1 for m in members_list if m["participation_category"] == "Ineligible")
     excluded_count = sum(1 for m in members_list if m["is_excluded"])
     
+    # Get current rules for reference
+    rules = await kalamela_service.get_kalamela_rules(db)
+    
     return {
         "members": members_list,
         "total_count": len(members_list),
@@ -184,6 +173,12 @@ async def list_district_members(
             "unit_id": unit_id,
             "participation_category": participation_category,
             "search": search,
+        },
+        "age_restrictions": {
+            "junior_dob_start": rules.get("junior_dob_start"),
+            "junior_dob_end": rules.get("junior_dob_end"),
+            "senior_dob_start": rules.get("senior_dob_start"),
+            "senior_dob_end": rules.get("senior_dob_end"),
         },
     }
 

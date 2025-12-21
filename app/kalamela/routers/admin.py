@@ -25,6 +25,7 @@ from app.kalamela.models import (
     PaymentStatus,
     EventCategory,
     RegistrationFee,
+    KalamelaRules,
 )
 from app.kalamela.schemas import (
     IndividualEventCreate,
@@ -51,6 +52,9 @@ from app.kalamela.schemas import (
     RegistrationFeeCreate,
     RegistrationFeeUpdate,
     RegistrationFeeResponse,
+    KalamelaRuleCreate,
+    KalamelaRuleUpdate,
+    KalamelaRuleResponse,
 )
 from app.kalamela import service as kalamela_service
 
@@ -1681,3 +1685,216 @@ async def export_results(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=kalamela_results.xlsx"}
     )
+
+
+# =============================================================================
+# Kalamela Rules Management
+# =============================================================================
+
+@router.get("/rules", response_model=List[KalamelaRuleResponse])
+async def list_rules(
+    category: Optional[str] = None,
+    active_only: bool = True,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    List all Kalamela rules.
+    
+    Query Parameters:
+    - category: Filter by rule category (age_restriction, participation_limit, fee)
+    - active_only: If True, only return active rules (default: True)
+    """
+    stmt = select(KalamelaRules)
+    
+    if active_only:
+        stmt = stmt.where(KalamelaRules.is_active == True)
+    
+    if category:
+        from app.kalamela.models import RuleCategory
+        try:
+            rule_cat = RuleCategory(category)
+            stmt = stmt.where(KalamelaRules.rule_category == rule_cat)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid category. Must be one of: age_restriction, participation_limit, fee"
+            )
+    
+    stmt = stmt.order_by(KalamelaRules.rule_category, KalamelaRules.rule_key)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/rules/grouped", response_model=dict)
+async def get_rules_grouped(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Get all active rules grouped by category for easier frontend consumption.
+    
+    Returns:
+    {
+        "age_restrictions": {
+            "senior_dob_start": "1991-01-11",
+            "senior_dob_end": "2005-01-10",
+            ...
+        },
+        "participation_limits": {
+            "max_individual_events_per_person": "5",
+            ...
+        },
+        "fees": {
+            "individual_event_fee": "50",
+            ...
+        }
+    }
+    """
+    stmt = select(KalamelaRules).where(KalamelaRules.is_active == True)
+    result = await db.execute(stmt)
+    rules = list(result.scalars().all())
+    
+    grouped = {
+        "age_restrictions": {},
+        "participation_limits": {},
+        "fees": {},
+    }
+    
+    for rule in rules:
+        if rule.rule_category.value == "age_restriction":
+            grouped["age_restrictions"][rule.rule_key] = rule.rule_value
+        elif rule.rule_category.value == "participation_limit":
+            grouped["participation_limits"][rule.rule_key] = rule.rule_value
+        elif rule.rule_category.value == "fee":
+            grouped["fees"][rule.rule_key] = rule.rule_value
+    
+    return grouped
+
+
+@router.get("/rules/{rule_id}", response_model=KalamelaRuleResponse)
+async def get_rule(
+    rule_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a single rule by ID."""
+    stmt = select(KalamelaRules).where(KalamelaRules.id == rule_id)
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rule not found"
+        )
+    
+    return rule
+
+
+@router.put("/rules/{rule_id}", response_model=KalamelaRuleResponse)
+async def update_rule(
+    rule_id: int,
+    data: KalamelaRuleUpdate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Update a Kalamela rule.
+    
+    Note: rule_key and rule_category cannot be changed to maintain data integrity.
+    Only rule_value, display_name, description, and is_active can be updated.
+    """
+    stmt = select(KalamelaRules).where(KalamelaRules.id == rule_id)
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rule not found"
+        )
+    
+    # Update fields
+    if data.rule_value is not None:
+        rule.rule_value = data.rule_value
+    if data.display_name is not None:
+        rule.display_name = data.display_name
+    if data.description is not None:
+        rule.description = data.description
+    if data.is_active is not None:
+        rule.is_active = data.is_active
+    
+    rule.updated_by_id = current_user.id
+    
+    await db.commit()
+    await db.refresh(rule)
+    
+    return rule
+
+
+@router.post("/rules", response_model=KalamelaRuleResponse, status_code=status.HTTP_201_CREATED)
+async def create_rule(
+    data: KalamelaRuleCreate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Create a new Kalamela rule.
+    
+    Note: This is typically not needed as rules are seeded during migration.
+    Use this only if you need to add new rules dynamically.
+    """
+    from app.kalamela.models import RuleCategory
+    
+    # Check if rule_key already exists
+    stmt = select(KalamelaRules).where(KalamelaRules.rule_key == data.rule_key)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rule with this key already exists"
+        )
+    
+    rule = KalamelaRules(
+        rule_key=data.rule_key,
+        rule_category=RuleCategory(data.rule_category.value),
+        rule_value=data.rule_value,
+        display_name=data.display_name,
+        description=data.description,
+        is_active=data.is_active,
+        updated_by_id=current_user.id,
+    )
+    
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    
+    return rule
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule(
+    rule_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Delete a Kalamela rule.
+    
+    Warning: This permanently removes the rule. Consider deactivating instead.
+    """
+    stmt = select(KalamelaRules).where(KalamelaRules.id == rule_id)
+    result = await db.execute(stmt)
+    rule = result.scalar_one_or_none()
+    
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rule not found"
+        )
+    
+    await db.delete(rule)
+    await db.commit()
+    
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

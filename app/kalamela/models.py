@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 import enum
 
-from sqlalchemy import Column, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
@@ -12,6 +12,13 @@ from app.auth.models import CustomUser, UnitMembers
 class SeniorityCategory(str, enum.Enum):
     JUNIOR = "Junior"
     SENIOR = "Senior"
+
+
+class RuleCategory(str, enum.Enum):
+    """Categories for Kalamela rules."""
+    AGE_RESTRICTION = "age_restriction"
+    PARTICIPATION_LIMIT = "participation_limit"
+    FEE = "fee"
 
 
 class PaymentStatus(str, enum.Enum):
@@ -236,4 +243,33 @@ class AppealPayments(Base):
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     appeal: Mapped[Appeal] = relationship("Appeal")
+
+
+class KalamelaRules(Base):
+    """
+    Kalamela participation rules - managed by admin.
+    
+    Stores configurable rules for:
+    - Age restrictions (Junior/Senior DOB ranges)
+    - Participation limits (max events per person, max participants per unit)
+    - Fee configurations
+    """
+    __tablename__ = "kalamela_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    rule_category: Mapped[RuleCategory] = mapped_column(
+        SAEnum(RuleCategory, values_callable=lambda x: [e.value for e in x]), 
+        nullable=False
+    )
+    rule_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"))
+
+    # Relationship
+    updated_by: Mapped[Optional["CustomUser"]] = relationship("CustomUser")
 

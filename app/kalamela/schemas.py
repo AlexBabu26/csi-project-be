@@ -426,3 +426,52 @@ class UnitMemberWithAge(BaseModel):
     age: Optional[int]
     unit_name: str
     is_excluded: bool = False
+
+
+# Kalamela Rules Schemas
+class RuleCategory(str, Enum):
+    """Categories for Kalamela rules."""
+    AGE_RESTRICTION = "age_restriction"
+    PARTICIPATION_LIMIT = "participation_limit"
+    FEE = "fee"
+
+
+class KalamelaRuleCreate(BaseModel):
+    """Create schema for Kalamela rule."""
+    rule_key: str = Field(..., min_length=1, max_length=100)
+    rule_category: RuleCategory
+    rule_value: str = Field(..., min_length=1, max_length=255)
+    display_name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=500)
+    is_active: bool = True
+
+
+class KalamelaRuleUpdate(BaseModel):
+    """Update schema for Kalamela rule."""
+    rule_value: Optional[str] = Field(None, min_length=1, max_length=255)
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class KalamelaRuleResponse(BaseModel):
+    """Response schema for Kalamela rule."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    rule_key: str
+    rule_category: RuleCategory
+    rule_value: str
+    display_name: str
+    description: Optional[str]
+    is_active: bool
+    created_on: datetime
+    updated_on: datetime
+    updated_by_id: Optional[int]
+
+
+class KalamelaRulesGrouped(BaseModel):
+    """Grouped rules by category for easier frontend consumption."""
+    age_restrictions: dict
+    participation_limits: dict
+    fees: dict
