@@ -47,7 +47,7 @@ class AuthService:
         Implements single session: invalidates all existing refresh tokens on new login.
         
         Args:
-            data: Login credentials
+            data: Login credentials (includes optional portal context for routing)
         
         Returns:
             LoginResponse with access token, refresh token, user type, and redirect URL
@@ -100,19 +100,46 @@ class AuthService:
         self._create_login_audit(data.username, user.id, True)
         self.session.commit()
         
-        # 6. Determine redirect URL based on user_type
-        redirect_map = {
-            UserType.ADMIN: "/admin/dashboard",
-            UserType.UNIT: "/units/dashboard",
-            UserType.DISTRICT_OFFICIAL: "/conference/official/home",
-        }
+        # 6. Determine redirect URL based on user_type AND portal context
+        redirect_url = self._get_redirect_url(user.user_type, data.portal)
         
         return auth_schema.LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token_str,
             user_type=user.user_type.value,
-            redirect_url=redirect_map.get(user.user_type, "/"),
+            redirect_url=redirect_url,
         )
+
+    def _get_redirect_url(self, user_type: UserType, portal: Optional[str] = None) -> str:
+        """
+        Determine redirect URL based on user type and portal context.
+        
+        For DISTRICT_OFFICIAL users, the portal parameter determines whether
+        they are redirected to Kalamela or Conference home page.
+        
+        Args:
+            user_type: The user's type (ADMIN, UNIT, DISTRICT_OFFICIAL)
+            portal: Optional portal context ('kalamela', 'conference', or None)
+        
+        Returns:
+            Appropriate redirect URL
+        """
+        # Default redirect map
+        default_redirects = {
+            UserType.ADMIN: "/admin/dashboard",
+            UserType.UNIT: "/units/dashboard",
+            UserType.DISTRICT_OFFICIAL: "/conference/official/home",  # Default for district officials
+        }
+        
+        # Portal-specific redirects for DISTRICT_OFFICIAL
+        if user_type == UserType.DISTRICT_OFFICIAL and portal:
+            portal_redirects = {
+                "kalamela": "/kalamela/official/home",
+                "conference": "/conference/official/home",
+            }
+            return portal_redirects.get(portal.lower(), default_redirects[user_type])
+        
+        return default_redirects.get(user_type, "/")
 
     def refresh_access_token(self, refresh_token_str: str) -> auth_schema.Token:
         """

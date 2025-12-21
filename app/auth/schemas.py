@@ -48,6 +48,10 @@ class UserCreate(UserBase):
 class UserLogin(BaseModel):
     username: str
     password: str
+    portal: Optional[str] = Field(
+        None,
+        description="Portal context for routing: 'kalamela', 'conference', or None for default"
+    )
 
 
 class UserRead(UserBase):
