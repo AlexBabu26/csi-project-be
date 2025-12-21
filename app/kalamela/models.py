@@ -27,15 +27,72 @@ class AppealStatus(str, enum.Enum):
     REJECTED = "Rejected"
 
 
+class EventType(str, enum.Enum):
+    INDIVIDUAL = "individual"
+    GROUP = "group"
+
+
+class EventCategory(Base):
+    """Master table for Kalamela event categories."""
+    __tablename__ = "event_category"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(1000))
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship to events
+    individual_events: Mapped[List["IndividualEvent"]] = relationship(
+        "IndividualEvent", back_populates="event_category"
+    )
+
+
+class RegistrationFee(Base):
+    """Master table for registration fees."""
+    __tablename__ = "registration_fee"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    event_type: Mapped[EventType] = mapped_column(SAEnum(EventType, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"), nullable=True)
+    updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"), nullable=True)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    created_by: Mapped[Optional["CustomUser"]] = relationship(
+        "CustomUser", foreign_keys=[created_by_id]
+    )
+    updated_by: Mapped[Optional["CustomUser"]] = relationship(
+        "CustomUser", foreign_keys=[updated_by_id]
+    )
+    individual_events: Mapped[List["IndividualEvent"]] = relationship(
+        "IndividualEvent", back_populates="registration_fee"
+    )
+    group_events: Mapped[List["GroupEvent"]] = relationship(
+        "GroupEvent", back_populates="registration_fee"
+    )
+
+
 class IndividualEvent(Base):
     __tablename__ = "individual_event"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    category: Mapped[Optional[str]] = mapped_column(String(255))
+    category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("event_category.id"), nullable=True)
+    registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # Relationships
+    event_category: Mapped[Optional["EventCategory"]] = relationship(
+        "EventCategory", back_populates="individual_events"
+    )
+    registration_fee: Mapped[Optional["RegistrationFee"]] = relationship(
+        "RegistrationFee", back_populates="individual_events"
+    )
     participations: Mapped[List["IndividualEventParticipation"]] = relationship(
         "IndividualEventParticipation", back_populates="individual_event"
     )
@@ -47,11 +104,16 @@ class GroupEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
+    registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     max_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
     min_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
     per_unit_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # Relationships
+    registration_fee: Mapped[Optional["RegistrationFee"]] = relationship(
+        "RegistrationFee", back_populates="group_events"
+    )
     participations: Mapped[List["GroupEventParticipation"]] = relationship(
         "GroupEventParticipation", back_populates="group_event"
     )

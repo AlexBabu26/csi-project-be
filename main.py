@@ -44,19 +44,19 @@ app.include_router(kalamela_official.router, prefix="/api/kalamela/official", ta
 app.include_router(kalamela_admin.router, prefix="/api/kalamela/admin", tags=["kalamela-admin"])
 
 
-@app.get("/health", tags=["system"])
+@app.get("/api/health", tags=["system"])
 async def health() -> dict:
     """Health check endpoint that pings the database to keep connections warm."""
     from sqlalchemy import text
-    from app.common.db import async_engine
-    
+    from app.common.db import get_async_engine
+
     try:
-        async with async_engine.connect() as conn:
+        async with get_async_engine().connect() as conn:
             await conn.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)}"
-    
+
     return {"status": "ok", "database": db_status}
 
 

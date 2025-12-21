@@ -23,6 +23,8 @@ from app.kalamela.models import (
     Appeal,
     AppealPayments,
     PaymentStatus,
+    EventCategory,
+    RegistrationFee,
 )
 from app.kalamela.schemas import (
     IndividualEventCreate,
@@ -43,6 +45,12 @@ from app.kalamela.schemas import (
     AppealResponse,
     AppealReply,
     KalamelaPaymentResponse,
+    EventCategoryCreate,
+    EventCategoryUpdate,
+    EventCategoryResponse,
+    RegistrationFeeCreate,
+    RegistrationFeeUpdate,
+    RegistrationFeeResponse,
 )
 from app.kalamela import service as kalamela_service
 
@@ -61,6 +69,293 @@ async def get_admin_user(
     return current_user
 
 
+# =============================================================================
+# Event Category Management
+# =============================================================================
+
+@router.get("/categories", response_model=List[EventCategoryResponse])
+async def list_categories(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all event categories."""
+    stmt = select(EventCategory).order_by(EventCategory.name)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.post("/categories", response_model=EventCategoryResponse, status_code=status.HTTP_201_CREATED)
+async def create_category(
+    data: EventCategoryCreate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a new event category."""
+    # Check if category with same name exists
+    stmt = select(EventCategory).where(EventCategory.name == data.name)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category with this name already exists"
+        )
+    
+    category = EventCategory(
+        name=data.name,
+        description=data.description,
+    )
+    db.add(category)
+    await db.commit()
+    await db.refresh(category)
+    
+    return category
+
+
+@router.get("/categories/{category_id}", response_model=EventCategoryResponse)
+async def get_category(
+    category_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a specific event category by ID."""
+    stmt = select(EventCategory).where(EventCategory.id == category_id)
+    result = await db.execute(stmt)
+    category = result.scalar_one_or_none()
+    
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+    
+    return category
+
+
+@router.put("/categories/{category_id}", response_model=EventCategoryResponse)
+async def update_category(
+    category_id: int,
+    data: EventCategoryUpdate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update an event category."""
+    stmt = select(EventCategory).where(EventCategory.id == category_id)
+    result = await db.execute(stmt)
+    category = result.scalar_one_or_none()
+    
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+    
+    if data.name is not None:
+        # Check for duplicate name
+        stmt = select(EventCategory).where(
+            EventCategory.name == data.name,
+            EventCategory.id != category_id
+        )
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Category with this name already exists"
+            )
+        category.name = data.name
+    
+    if data.description is not None:
+        category.description = data.description
+    
+    await db.commit()
+    await db.refresh(category)
+    
+    return category
+
+
+@router.delete("/categories/{category_id}", response_model=dict)
+async def delete_category(
+    category_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete an event category."""
+    stmt = select(EventCategory).where(EventCategory.id == category_id)
+    result = await db.execute(stmt)
+    category = result.scalar_one_or_none()
+    
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+    
+    # Check if category is in use
+    stmt = select(IndividualEvent).where(IndividualEvent.category_id == category_id)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete category that is in use by events"
+        )
+    
+    await db.delete(category)
+    await db.commit()
+    
+    return {"message": "Category deleted successfully"}
+
+
+# =============================================================================
+# Registration Fee Management
+# =============================================================================
+
+@router.get("/registration-fees", response_model=List[RegistrationFeeResponse])
+async def list_registration_fees(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all registration fees."""
+    stmt = select(RegistrationFee).order_by(RegistrationFee.name)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.post("/registration-fees", response_model=RegistrationFeeResponse, status_code=status.HTTP_201_CREATED)
+async def create_registration_fee(
+    data: RegistrationFeeCreate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a new registration fee."""
+    # Check if fee with same name exists
+    stmt = select(RegistrationFee).where(RegistrationFee.name == data.name)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration fee with this name already exists"
+        )
+    
+    fee = RegistrationFee(
+        name=data.name,
+        event_type=data.event_type,
+        amount=data.amount,
+        created_by_id=current_user.id,
+        updated_by_id=current_user.id,
+    )
+    db.add(fee)
+    await db.commit()
+    await db.refresh(fee)
+    
+    return fee
+
+
+@router.get("/registration-fees/{fee_id}", response_model=RegistrationFeeResponse)
+async def get_registration_fee(
+    fee_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a specific registration fee by ID."""
+    stmt = select(RegistrationFee).where(RegistrationFee.id == fee_id)
+    result = await db.execute(stmt)
+    fee = result.scalar_one_or_none()
+    
+    if not fee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registration fee not found"
+        )
+    
+    return fee
+
+
+@router.put("/registration-fees/{fee_id}", response_model=RegistrationFeeResponse)
+async def update_registration_fee(
+    fee_id: int,
+    data: RegistrationFeeUpdate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update a registration fee."""
+    stmt = select(RegistrationFee).where(RegistrationFee.id == fee_id)
+    result = await db.execute(stmt)
+    fee = result.scalar_one_or_none()
+    
+    if not fee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registration fee not found"
+        )
+    
+    if data.name is not None:
+        # Check for duplicate name
+        stmt = select(RegistrationFee).where(
+            RegistrationFee.name == data.name,
+            RegistrationFee.id != fee_id
+        )
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration fee with this name already exists"
+            )
+        fee.name = data.name
+    
+    if data.event_type is not None:
+        fee.event_type = data.event_type
+    
+    if data.amount is not None:
+        fee.amount = data.amount
+    
+    fee.updated_by_id = current_user.id
+    
+    await db.commit()
+    await db.refresh(fee)
+    
+    return fee
+
+
+@router.delete("/registration-fees/{fee_id}", response_model=dict)
+async def delete_registration_fee(
+    fee_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete a registration fee."""
+    stmt = select(RegistrationFee).where(RegistrationFee.id == fee_id)
+    result = await db.execute(stmt)
+    fee = result.scalar_one_or_none()
+    
+    if not fee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registration fee not found"
+        )
+    
+    # Check if fee is in use by individual events
+    stmt = select(IndividualEvent).where(IndividualEvent.registration_fee_id == fee_id)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete registration fee that is in use by individual events"
+        )
+    
+    # Check if fee is in use by group events
+    stmt = select(GroupEvent).where(GroupEvent.registration_fee_id == fee_id)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete registration fee that is in use by group events"
+        )
+    
+    await db.delete(fee)
+    await db.commit()
+    
+    return {"message": "Registration fee deleted successfully"}
+
+
 # Dashboard
 @router.get("/home", response_model=dict)
 async def admin_home(
@@ -68,11 +363,16 @@ async def admin_home(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Admin dashboard with all events."""
-    stmt_ind = select(IndividualEvent).order_by(IndividualEvent.name)
+    stmt_ind = select(IndividualEvent).options(
+        selectinload(IndividualEvent.event_category),
+        selectinload(IndividualEvent.registration_fee)
+    ).order_by(IndividualEvent.name)
     result_ind = await db.execute(stmt_ind)
     individual_events = list(result_ind.scalars().all())
     
-    stmt_grp = select(GroupEvent).order_by(GroupEvent.name)
+    stmt_grp = select(GroupEvent).options(
+        selectinload(GroupEvent.registration_fee)
+    ).order_by(GroupEvent.name)
     result_grp = await db.execute(stmt_grp)
     group_events = list(result_grp.scalars().all())
     
@@ -81,7 +381,10 @@ async def admin_home(
         {
             "id": e.id,
             "name": e.name,
-            "category": e.category,
+            "category_id": e.category_id,
+            "category_name": e.event_category.name if e.event_category else None,
+            "registration_fee_id": e.registration_fee_id,
+            "registration_fee_amount": e.registration_fee.amount if e.registration_fee else None,
             "description": e.description,
         }
         for e in individual_events
@@ -92,6 +395,8 @@ async def admin_home(
             "id": e.id,
             "name": e.name,
             "description": e.description,
+            "registration_fee_id": e.registration_fee_id,
+            "registration_fee_amount": e.registration_fee.amount if e.registration_fee else None,
             "min_allowed_limit": e.min_allowed_limit,
             "max_allowed_limit": e.max_allowed_limit,
             "per_unit_allowed_limit": e.per_unit_allowed_limit,
@@ -269,26 +574,67 @@ async def remove_from_exclusion(
 
 
 # Event Management
-@router.post("/events/individual", response_model=IndividualEventResponse)
+@router.post("/events/individual", response_model=dict)
 async def create_individual_event(
     data: IndividualEventCreate,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create individual event."""
+    # Validate category_id if provided
+    if data.category_id:
+        stmt = select(EventCategory).where(EventCategory.id == data.category_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid category_id. Category does not exist."
+            )
+    
+    # Validate registration_fee_id if provided
+    registration_fee_amount = None
+    if data.registration_fee_id:
+        stmt = select(RegistrationFee).where(RegistrationFee.id == data.registration_fee_id)
+        result = await db.execute(stmt)
+        fee = result.scalar_one_or_none()
+        if not fee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid registration_fee_id. Registration fee does not exist."
+            )
+        registration_fee_amount = fee.amount
+    
     event = IndividualEvent(
         name=data.name,
-        category=data.category,
+        category_id=data.category_id,
+        registration_fee_id=data.registration_fee_id,
         description=data.description,
     )
     db.add(event)
     await db.commit()
     await db.refresh(event)
     
-    return event
+    # Load the category relationship
+    category_name = None
+    if event.category_id:
+        stmt = select(EventCategory).where(EventCategory.id == event.category_id)
+        result = await db.execute(stmt)
+        category = result.scalar_one_or_none()
+        category_name = category.name if category else None
+    
+    return {
+        "id": event.id,
+        "name": event.name,
+        "category_id": event.category_id,
+        "category_name": category_name,
+        "registration_fee_id": event.registration_fee_id,
+        "registration_fee_amount": registration_fee_amount,
+        "description": event.description,
+        "created_on": event.created_on,
+    }
 
 
-@router.put("/events/individual/{event_id}", response_model=IndividualEventResponse)
+@router.put("/events/individual/{event_id}", response_model=dict)
 async def update_individual_event(
     event_id: int,
     data: IndividualEventUpdate,
@@ -308,27 +654,83 @@ async def update_individual_event(
     
     if data.name is not None:
         event.name = data.name
-    if data.category is not None:
-        event.category = data.category
+    if data.category_id is not None:
+        # Validate category_id
+        stmt = select(EventCategory).where(EventCategory.id == data.category_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid category_id. Category does not exist."
+            )
+        event.category_id = data.category_id
+    if data.registration_fee_id is not None:
+        # Validate registration_fee_id
+        stmt = select(RegistrationFee).where(RegistrationFee.id == data.registration_fee_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid registration_fee_id. Registration fee does not exist."
+            )
+        event.registration_fee_id = data.registration_fee_id
     if data.description is not None:
         event.description = data.description
     
     await db.commit()
     await db.refresh(event)
     
-    return event
+    # Load the category and registration fee relationships
+    category_name = None
+    if event.category_id:
+        stmt = select(EventCategory).where(EventCategory.id == event.category_id)
+        result = await db.execute(stmt)
+        category = result.scalar_one_or_none()
+        category_name = category.name if category else None
+    
+    registration_fee_amount = None
+    if event.registration_fee_id:
+        stmt = select(RegistrationFee).where(RegistrationFee.id == event.registration_fee_id)
+        result = await db.execute(stmt)
+        fee = result.scalar_one_or_none()
+        registration_fee_amount = fee.amount if fee else None
+    
+    return {
+        "id": event.id,
+        "name": event.name,
+        "category_id": event.category_id,
+        "category_name": category_name,
+        "registration_fee_id": event.registration_fee_id,
+        "registration_fee_amount": registration_fee_amount,
+        "description": event.description,
+        "created_on": event.created_on,
+    }
 
 
-@router.post("/events/group", response_model=GroupEventResponse)
+@router.post("/events/group", response_model=dict)
 async def create_group_event(
     data: GroupEventCreate,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create group event."""
+    # Validate registration_fee_id if provided
+    registration_fee_amount = None
+    if data.registration_fee_id:
+        stmt = select(RegistrationFee).where(RegistrationFee.id == data.registration_fee_id)
+        result = await db.execute(stmt)
+        fee = result.scalar_one_or_none()
+        if not fee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid registration_fee_id. Registration fee does not exist."
+            )
+        registration_fee_amount = fee.amount
+    
     event = GroupEvent(
         name=data.name,
         description=data.description,
+        registration_fee_id=data.registration_fee_id,
         max_allowed_limit=data.max_allowed_limit,
         min_allowed_limit=data.min_allowed_limit,
         per_unit_allowed_limit=data.per_unit_allowed_limit,
@@ -337,10 +739,20 @@ async def create_group_event(
     await db.commit()
     await db.refresh(event)
     
-    return event
+    return {
+        "id": event.id,
+        "name": event.name,
+        "description": event.description,
+        "registration_fee_id": event.registration_fee_id,
+        "registration_fee_amount": registration_fee_amount,
+        "max_allowed_limit": event.max_allowed_limit,
+        "min_allowed_limit": event.min_allowed_limit,
+        "per_unit_allowed_limit": event.per_unit_allowed_limit,
+        "created_on": event.created_on,
+    }
 
 
-@router.put("/events/group/{event_id}", response_model=GroupEventResponse)
+@router.put("/events/group/{event_id}", response_model=dict)
 async def update_group_event(
     event_id: int,
     data: GroupEventUpdate,
@@ -362,6 +774,16 @@ async def update_group_event(
         event.name = data.name
     if data.description is not None:
         event.description = data.description
+    if data.registration_fee_id is not None:
+        # Validate registration_fee_id
+        stmt = select(RegistrationFee).where(RegistrationFee.id == data.registration_fee_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid registration_fee_id. Registration fee does not exist."
+            )
+        event.registration_fee_id = data.registration_fee_id
     if data.max_allowed_limit is not None:
         event.max_allowed_limit = data.max_allowed_limit
     if data.min_allowed_limit is not None:
@@ -372,7 +794,93 @@ async def update_group_event(
     await db.commit()
     await db.refresh(event)
     
-    return event
+    # Load the registration fee relationship
+    registration_fee_amount = None
+    if event.registration_fee_id:
+        stmt = select(RegistrationFee).where(RegistrationFee.id == event.registration_fee_id)
+        result = await db.execute(stmt)
+        fee = result.scalar_one_or_none()
+        registration_fee_amount = fee.amount if fee else None
+    
+    return {
+        "id": event.id,
+        "name": event.name,
+        "description": event.description,
+        "registration_fee_id": event.registration_fee_id,
+        "registration_fee_amount": registration_fee_amount,
+        "max_allowed_limit": event.max_allowed_limit,
+        "min_allowed_limit": event.min_allowed_limit,
+        "per_unit_allowed_limit": event.per_unit_allowed_limit,
+        "created_on": event.created_on,
+    }
+
+
+@router.delete("/events/individual/{event_id}", response_model=dict)
+async def delete_individual_event(
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete an individual event."""
+    stmt = select(IndividualEvent).where(IndividualEvent.id == event_id)
+    result = await db.execute(stmt)
+    event = result.scalar_one_or_none()
+    
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+    
+    # Check if event has participations
+    stmt = select(IndividualEventParticipation).where(
+        IndividualEventParticipation.individual_event_id == event_id
+    )
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete event that has participations. Remove all participations first."
+        )
+    
+    await db.delete(event)
+    await db.commit()
+    
+    return {"message": "Individual event deleted successfully"}
+
+
+@router.delete("/events/group/{event_id}", response_model=dict)
+async def delete_group_event(
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete a group event."""
+    stmt = select(GroupEvent).where(GroupEvent.id == event_id)
+    result = await db.execute(stmt)
+    event = result.scalar_one_or_none()
+    
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+    
+    # Check if event has participations
+    stmt = select(GroupEventParticipation).where(
+        GroupEventParticipation.group_event_id == event_id
+    )
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete event that has participations. Remove all participations first."
+        )
+    
+    await db.delete(event)
+    await db.commit()
+    
+    return {"message": "Group event deleted successfully"}
 
 
 # Participant Management
@@ -436,12 +944,17 @@ async def view_events_preview(
     result = await db.execute(stmt)
     districts = list(result.scalars().all())
     
-    # Get all events
-    stmt = select(IndividualEvent)
+    # Get all events with category and registration fee info
+    stmt = select(IndividualEvent).options(
+        selectinload(IndividualEvent.event_category),
+        selectinload(IndividualEvent.registration_fee)
+    )
     result = await db.execute(stmt)
     individual_events = list(result.scalars().all())
     
-    stmt = select(GroupEvent)
+    stmt = select(GroupEvent).options(
+        selectinload(GroupEvent.registration_fee)
+    )
     result = await db.execute(stmt)
     group_events = list(result.scalars().all())
     
@@ -458,8 +971,23 @@ async def view_events_preview(
             total_group_teams.append(team_code)
     group_count = len(total_group_teams)
     
-    individual_amount = individual_count * 50
-    group_amount = group_count * 100
+    # Get default fees from registration_fee table (fallback to hardcoded if not found)
+    from app.kalamela.models import EventType
+    
+    # Get default individual fee
+    stmt = select(RegistrationFee).where(RegistrationFee.event_type == EventType.INDIVIDUAL).order_by(RegistrationFee.id).limit(1)
+    result = await db.execute(stmt)
+    default_individual_fee = result.scalar_one_or_none()
+    individual_fee_amount = default_individual_fee.amount if default_individual_fee else 50
+    
+    # Get default group fee
+    stmt = select(RegistrationFee).where(RegistrationFee.event_type == EventType.GROUP).order_by(RegistrationFee.id).limit(1)
+    result = await db.execute(stmt)
+    default_group_fee = result.scalar_one_or_none()
+    group_fee_amount = default_group_fee.amount if default_group_fee else 100
+    
+    individual_amount = individual_count * individual_fee_amount
+    group_amount = group_count * group_fee_amount
     total_amount = individual_amount + group_amount
     
     # Get district name if filtered
@@ -490,7 +1018,10 @@ async def view_events_preview(
         {
             "id": e.id,
             "name": e.name,
-            "category": e.category,
+            "category_id": e.category_id,
+            "category_name": e.event_category.name if e.event_category else None,
+            "registration_fee_id": e.registration_fee_id,
+            "registration_fee_amount": e.registration_fee.amount if e.registration_fee else individual_fee_amount,
             "description": e.description,
         }
         for e in individual_events
@@ -501,6 +1032,8 @@ async def view_events_preview(
             "id": e.id,
             "name": e.name,
             "description": e.description,
+            "registration_fee_id": e.registration_fee_id,
+            "registration_fee_amount": e.registration_fee.amount if e.registration_fee else group_fee_amount,
             "min_allowed_limit": e.min_allowed_limit,
             "max_allowed_limit": e.max_allowed_limit,
             "per_unit_allowed_limit": e.per_unit_allowed_limit,

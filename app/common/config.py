@@ -10,6 +10,18 @@ class Settings(BaseSettings):
 
     app_name: str = "CSI Kalamela FastAPI"
     debug: bool = False
+    
+    # Database Configuration
+    # For Neon serverless PostgreSQL, use the POOLED connection string for better
+    # performance in serverless environments. The pooler reduces cold start latency.
+    #
+    # Direct connection (slower cold starts):
+    #   postgresql+psycopg://user:pass@ep-xxx.region.aws.neon.tech/dbname
+    #
+    # Pooled connection (recommended for Vercel/serverless):
+    #   postgresql+psycopg://user:pass@ep-xxx-pooler.region.aws.neon.tech/dbname?sslmode=require
+    #
+    # Note the "-pooler" suffix in the hostname for the pooled connection.
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/csi_kalamela"
     secret_key: str = "change-this-secret"
     access_token_expire_minutes: int = 15  # Short-lived access tokens

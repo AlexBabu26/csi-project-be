@@ -3,13 +3,14 @@
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.common.db import get_db
 from app.common.storage import save_upload_file, get_file_url
 from app.common.config import get_settings
 from app.common.security import get_current_user_sync
+from app.common.cache import get_cache, set_cache, clear_cache
 from app.auth.models import CustomUser, UserType
 from app.admin.models import SiteSettings, Notice, QuickLink
 from app.admin.schemas import (
@@ -27,6 +28,10 @@ from app.admin.schemas import (
 
 router = APIRouter()
 settings = get_settings()
+
+# Cache configuration for site settings
+SITE_SETTINGS_CACHE_KEY = "site_settings_v1"
+SITE_SETTINGS_CACHE_TTL = 1800  # 30 minutes
 
 
 def get_public_file_url(object_key: str | None) -> str | None:
@@ -66,15 +71,26 @@ def get_or_create_site_settings(db: Session) -> SiteSettings:
 # ============ SITE SETTINGS ENDPOINTS ============
 
 @router.get("/site-settings", response_model=dict)
-def get_site_settings(db: Session = Depends(get_db)):
+def get_site_settings(db: Session = Depends(get_db), response: Response = None):
     """Get all site settings (public endpoint)."""
+    
+    # Check in-memory cache first
+    cached = get_cache(SITE_SETTINGS_CACHE_KEY)
+    if cached:
+        if response:
+            response.headers["X-Cache"] = "HIT"
+            response.headers["Cache-Control"] = "public, s-maxage=1800, stale-while-revalidate=3600"
+            response.headers["CDN-Cache-Control"] = "public, max-age=1800"
+        return cached
+    
+    # Cache miss - fetch from database
     site_settings = get_or_create_site_settings(db)
     
     # Also fetch quick links for the response
     quick_links = db.query(QuickLink).filter(QuickLink.enabled == True).order_by(QuickLink.display_order).all()
     
-    response = SiteSettingsResponse.from_orm_with_nested(site_settings)
-    response_dict = response.model_dump()
+    site_response = SiteSettingsResponse.from_orm_with_nested(site_settings)
+    response_dict = site_response.model_dump()
     
     # Convert logo object keys to full public URLs
     response_dict["logo_primary_url"] = get_public_file_url(site_settings.logo_primary_url)
@@ -85,6 +101,15 @@ def get_site_settings(db: Session = Depends(get_db)):
         {"id": ql.id, "label": ql.label, "url": ql.url, "enabled": ql.enabled}
         for ql in quick_links
     ]
+    
+    # Cache the result
+    set_cache(SITE_SETTINGS_CACHE_KEY, response_dict, ttl_seconds=SITE_SETTINGS_CACHE_TTL)
+    
+    # Add Vercel Edge + Browser caching headers
+    if response:
+        response.headers["X-Cache"] = "MISS"
+        response.headers["Cache-Control"] = "public, s-maxage=1800, stale-while-revalidate=3600"
+        response.headers["CDN-Cache-Control"] = "public, max-age=1800"
     
     return response_dict
 
@@ -125,6 +150,9 @@ def update_site_settings(
     db.commit()
     db.refresh(settings)
     
+    # Invalidate cache after update
+    clear_cache(SITE_SETTINGS_CACHE_KEY)
+    
     return {
         "message": "Site settings updated successfully",
         **SiteSettingsResponse.from_orm_with_nested(settings).model_dump()
@@ -157,6 +185,9 @@ def upload_logo(
     setattr(settings, logo_field, object_key)
     settings.updated_at = datetime.now(timezone.utc)
     db.commit()
+    
+    # Invalidate cache after logo update
+    clear_cache(SITE_SETTINGS_CACHE_KEY)
     
     return LogoUploadResponse(
         logo_type=logo_type,

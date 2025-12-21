@@ -29,18 +29,79 @@ class AppealStatus(str, Enum):
     REJECTED = "Rejected"
 
 
+class EventType(str, Enum):
+    """Event type enum for registration fees."""
+    INDIVIDUAL = "individual"
+    GROUP = "group"
+
+
+# Registration Fee Schemas
+class RegistrationFeeCreate(BaseModel):
+    """Create schema for registration fee."""
+    name: str = Field(..., min_length=1, max_length=255)
+    event_type: EventType = Field(..., description="Type of event: 'individual' or 'group'")
+    amount: int = Field(..., ge=0, description="Registration fee amount")
+
+
+class RegistrationFeeUpdate(BaseModel):
+    """Update schema for registration fee."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    event_type: Optional[EventType] = Field(None, description="Type of event: 'individual' or 'group'")
+    amount: Optional[int] = Field(None, ge=0, description="Registration fee amount")
+
+
+class RegistrationFeeResponse(BaseModel):
+    """Response schema for registration fee."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    name: str
+    event_type: EventType
+    amount: int
+    created_by_id: Optional[int]
+    updated_by_id: Optional[int]
+    created_on: datetime
+    updated_on: datetime
+
+
+# Event Category Schemas
+class EventCategoryCreate(BaseModel):
+    """Create schema for event category."""
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+
+
+class EventCategoryUpdate(BaseModel):
+    """Update schema for event category."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+
+
+class EventCategoryResponse(BaseModel):
+    """Response schema for event category."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    name: str
+    description: Optional[str]
+    created_on: datetime
+    updated_on: datetime
+
+
 # Event Schemas
 class IndividualEventCreate(BaseModel):
     """Create schema for individual events."""
     name: str = Field(..., min_length=1, max_length=255)
-    category: Optional[str] = Field(None, max_length=255)
+    category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
+    registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
 
 
 class IndividualEventUpdate(BaseModel):
     """Update schema for individual events."""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    category: Optional[str] = Field(None, max_length=255)
+    category_id: Optional[int] = Field(None, gt=0, description="Foreign key to event_category table")
+    registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     description: Optional[str] = Field(None, max_length=1000)
 
 
@@ -50,7 +111,10 @@ class IndividualEventResponse(BaseModel):
     
     id: int
     name: str
-    category: Optional[str]
+    category_id: Optional[int]
+    category_name: Optional[str] = None
+    registration_fee_id: Optional[int]
+    registration_fee_amount: Optional[int] = None
     description: Optional[str]
     created_on: datetime
 
@@ -59,6 +123,7 @@ class GroupEventCreate(BaseModel):
     """Create schema for group events."""
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
+    registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     max_allowed_limit: int = Field(default=2, ge=1)
     min_allowed_limit: int = Field(default=1, ge=1)
     per_unit_allowed_limit: int = Field(default=2, ge=1)
@@ -68,6 +133,7 @@ class GroupEventUpdate(BaseModel):
     """Update schema for group events."""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
+    registration_fee_id: Optional[int] = Field(None, gt=0, description="Foreign key to registration_fee table")
     max_allowed_limit: Optional[int] = Field(None, ge=1)
     min_allowed_limit: Optional[int] = Field(None, ge=1)
     per_unit_allowed_limit: Optional[int] = Field(None, ge=1)
@@ -80,6 +146,8 @@ class GroupEventResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
+    registration_fee_id: Optional[int]
+    registration_fee_amount: Optional[int] = None
     max_allowed_limit: int
     min_allowed_limit: int
     per_unit_allowed_limit: int
