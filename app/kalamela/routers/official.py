@@ -59,11 +59,19 @@ async def list_district_members(
         description="Filter by participation category: 'Junior', 'Senior', or 'Ineligible'"
     ),
     search: Optional[str] = Query(None, description="Search by member name"),
+    event_id: Optional[int] = Query(None, description="Filter by event ID to get eligible participants"),
+    event_type: Optional[str] = Query(None, description="Event type: 'individual' or 'group' (required if event_id is provided)"),
     current_user: CustomUser = Depends(get_official_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
     List all unit members within the logged-in district official's district.
+    
+    When event_id is provided, filters members based on:
+    - Event's gender_restriction (Male/Female/null)
+    - Event's seniority_restriction (Junior/Senior/null)
+    - Members not already registered for this event
+    - Members not excluded from Kalamela
     
     Returns:
     - id: Unit member ID
@@ -76,12 +84,90 @@ async def list_district_members(
     - unit_name: Name of the unit
     - participation_category: Junior, Senior, or Ineligible (based on DOB ranges from DB rules)
     - is_excluded: Whether the member is excluded from Kalamela
+    - is_eligible: (only when event_id provided) Whether member is eligible for the event
     
     Filters:
     - unit_id: Filter by specific unit
     - participation_category: Filter by Junior/Senior/Ineligible
     - search: Search by member name (case-insensitive)
+    - event_id + event_type: Filter by event restrictions and exclude already registered
     """
+    # Validate event_type if event_id is provided
+    if event_id and not event_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="event_type is required when event_id is provided. Use 'individual' or 'group'."
+        )
+    
+    if event_type and event_type not in ["individual", "group"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="event_type must be 'individual' or 'group'"
+        )
+    
+    # Get event details if event_id is provided
+    event = None
+    event_context = None
+    already_registered_ids = set()
+    
+    if event_id:
+        if event_type == "individual":
+            stmt = select(IndividualEvent).where(IndividualEvent.id == event_id)
+            result = await db.execute(stmt)
+            event = result.scalar_one_or_none()
+            
+            if not event:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Individual event with ID {event_id} not found"
+                )
+            
+            # Get already registered members for this event
+            stmt_registered = select(IndividualEventParticipation.participant_id).where(
+                IndividualEventParticipation.individual_event_id == event_id
+            )
+            result_registered = await db.execute(stmt_registered)
+            already_registered_ids = set(row[0] for row in result_registered.all())
+            
+            event_context = {
+                "id": event.id,
+                "name": event.name,
+                "type": "individual",
+                "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+                "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
+                "is_mandatory": event.is_mandatory,
+                "already_registered_count": len(already_registered_ids),
+            }
+        else:  # group
+            stmt = select(GroupEvent).where(GroupEvent.id == event_id)
+            result = await db.execute(stmt)
+            event = result.scalar_one_or_none()
+            
+            if not event:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Group event with ID {event_id} not found"
+                )
+            
+            # Get already registered members for this event
+            stmt_registered = select(GroupEventParticipation.participant_id).where(
+                GroupEventParticipation.group_event_id == event_id
+            )
+            result_registered = await db.execute(stmt_registered)
+            already_registered_ids = set(row[0] for row in result_registered.all())
+            
+            event_context = {
+                "id": event.id,
+                "name": event.name,
+                "type": "group",
+                "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+                "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
+                "is_mandatory": event.is_mandatory,
+                "min_allowed_limit": event.min_allowed_limit,
+                "max_allowed_limit": event.max_allowed_limit,
+                "already_registered_count": len(already_registered_ids),
+            }
+    
     # Get age restrictions from database rules
     age_restrictions = await kalamela_service.get_age_restrictions(db)
     
@@ -116,6 +202,8 @@ async def list_district_members(
     
     # Build response with calculated fields using DB rules
     members_list = []
+    eligible_count = 0
+    
     for member in members:
         # Use service function for category determination
         category = kalamela_service.get_participation_category_from_dob(
@@ -129,8 +217,47 @@ async def list_district_members(
         age = calculate_age(member.dob)
         unit_name = member.registered_user.unit_name.name if member.registered_user and member.registered_user.unit_name else None
         unit_id_val = member.registered_user.unit_name_id if member.registered_user else None
+        is_excluded = member.id in excluded_ids
         
-        members_list.append({
+        # Determine eligibility if event is specified
+        is_eligible = True
+        ineligibility_reasons = []
+        
+        if event:
+            # Check if already registered
+            if member.id in already_registered_ids:
+                is_eligible = False
+                ineligibility_reasons.append("Already registered for this event")
+            
+            # Check if excluded
+            if is_excluded:
+                is_eligible = False
+                ineligibility_reasons.append("Excluded from Kalamela")
+            
+            # Check gender restriction
+            if event.gender_restriction:
+                gender_map = {"Male": "M", "Female": "F"}
+                required_gender = gender_map.get(event.gender_restriction.value)
+                if required_gender and member.gender != required_gender:
+                    is_eligible = False
+                    ineligibility_reasons.append(f"Gender mismatch (requires {event.gender_restriction.value})")
+            
+            # Check seniority restriction
+            if event.seniority_restriction:
+                required_seniority = event.seniority_restriction.value
+                if category != required_seniority:
+                    is_eligible = False
+                    ineligibility_reasons.append(f"Seniority mismatch (requires {required_seniority}, member is {category})")
+            
+            # Check if member is ineligible by age
+            if category == "Ineligible":
+                is_eligible = False
+                ineligibility_reasons.append("Age outside eligible range")
+            
+            if is_eligible:
+                eligible_count += 1
+        
+        member_data = {
             "id": member.id,
             "name": member.name,
             "phone_number": member.number,
@@ -140,8 +267,17 @@ async def list_district_members(
             "unit_id": unit_id_val,
             "unit_name": unit_name,
             "participation_category": category,
-            "is_excluded": member.id in excluded_ids,
-        })
+            "is_excluded": is_excluded,
+        }
+        
+        # Add eligibility info if event is specified
+        if event:
+            member_data["is_eligible"] = is_eligible
+            member_data["is_already_registered"] = member.id in already_registered_ids
+            if not is_eligible:
+                member_data["ineligibility_reasons"] = ineligibility_reasons
+        
+        members_list.append(member_data)
     
     # Get units for filter dropdown
     stmt_units = select(UnitName).where(
@@ -159,7 +295,7 @@ async def list_district_members(
     # Get current rules for reference
     rules = await kalamela_service.get_kalamela_rules(db)
     
-    return {
+    response = {
         "members": members_list,
         "total_count": len(members_list),
         "summary": {
@@ -173,6 +309,8 @@ async def list_district_members(
             "unit_id": unit_id,
             "participation_category": participation_category,
             "search": search,
+            "event_id": event_id,
+            "event_type": event_type,
         },
         "age_restrictions": {
             "junior_dob_start": rules.get("junior_dob_start"),
@@ -181,6 +319,13 @@ async def list_district_members(
             "senior_dob_end": rules.get("senior_dob_end"),
         },
     }
+    
+    # Add event context if event filtering is applied
+    if event_context:
+        response["event_context"] = event_context
+        response["summary"]["eligible_count"] = eligible_count
+    
+    return response
 
 
 # Home

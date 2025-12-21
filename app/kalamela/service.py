@@ -23,6 +23,7 @@ from app.kalamela.models import (
     Appeal,
     AppealPayments,
     SeniorityCategory,
+    GenderRestriction,
     PaymentStatus,
     AppealStatus,
     KalamelaRules,
@@ -291,8 +292,8 @@ async def individual_event_members_data(
     Filters by:
     - District
     - Unit (optional)
-    - Gender (from event name: boys/girls)
-    - Age/DOB (from event name: junior/senior) - using DB rules
+    - Gender (from event.gender_restriction column)
+    - Age/DOB (from event.seniority_restriction column) - using DB rules
     - Not excluded
     - Not already registered for this event
     """
@@ -335,28 +336,29 @@ async def individual_event_members_data(
     if excluded_ids:
         stmt = stmt.where(UnitMembers.id.notin_(excluded_ids))
     
-    # Gender filtering
-    event_name_lower = event.name.lower()
-    if "boys" in event_name_lower:
-        stmt = stmt.where(UnitMembers.gender == "M")
-    elif "girls" in event_name_lower:
-        stmt = stmt.where(UnitMembers.gender == "F")
+    # Gender filtering using database column
+    if event.gender_restriction:
+        if event.gender_restriction == GenderRestriction.MALE:
+            stmt = stmt.where(UnitMembers.gender == "M")
+        elif event.gender_restriction == GenderRestriction.FEMALE:
+            stmt = stmt.where(UnitMembers.gender == "F")
     
-    # Age filtering using database rules
-    if "junior" in event_name_lower:
-        stmt = stmt.where(
-            and_(
-                UnitMembers.dob >= age_restrictions["junior_dob_start"],
-                UnitMembers.dob <= age_restrictions["junior_dob_end"]
+    # Age/Seniority filtering using database column
+    if event.seniority_restriction:
+        if event.seniority_restriction == SeniorityCategory.JUNIOR:
+            stmt = stmt.where(
+                and_(
+                    UnitMembers.dob >= age_restrictions["junior_dob_start"],
+                    UnitMembers.dob <= age_restrictions["junior_dob_end"]
+                )
             )
-        )
-    elif "senior" in event_name_lower:
-        stmt = stmt.where(
-            and_(
-                UnitMembers.dob >= age_restrictions["senior_dob_start"],
-                UnitMembers.dob <= age_restrictions["senior_dob_end"]
+        elif event.seniority_restriction == SeniorityCategory.SENIOR:
+            stmt = stmt.where(
+                and_(
+                    UnitMembers.dob >= age_restrictions["senior_dob_start"],
+                    UnitMembers.dob <= age_restrictions["senior_dob_end"]
+                )
             )
-        )
     
     stmt = stmt.order_by(UnitMembers.name)
     
@@ -370,7 +372,20 @@ async def group_event_members_data(
     district_id: int,
     unit_id: Optional[int] = None,
 ) -> List[UnitMembers]:
-    """Get eligible members for a group event."""
+    """
+    Get eligible members for a group event.
+    
+    Filters by:
+    - District
+    - Unit (optional)
+    - Gender (from event.gender_restriction column)
+    - Age/DOB (from event.seniority_restriction column) - using DB rules
+    - Not excluded
+    - Not already registered for this event
+    """
+    # Get age restrictions from database
+    age_restrictions = await get_age_restrictions(db)
+    
     # Get excluded members
     stmt_excluded = select(KalamelaExcludeMembers.members_id)
     result_excluded = await db.execute(stmt_excluded)
@@ -405,6 +420,30 @@ async def group_event_members_data(
     if excluded_ids:
         stmt = stmt.where(UnitMembers.id.notin_(excluded_ids))
     
+    # Gender filtering using database column
+    if event.gender_restriction:
+        if event.gender_restriction == GenderRestriction.MALE:
+            stmt = stmt.where(UnitMembers.gender == "M")
+        elif event.gender_restriction == GenderRestriction.FEMALE:
+            stmt = stmt.where(UnitMembers.gender == "F")
+    
+    # Age/Seniority filtering using database column
+    if event.seniority_restriction:
+        if event.seniority_restriction == SeniorityCategory.JUNIOR:
+            stmt = stmt.where(
+                and_(
+                    UnitMembers.dob >= age_restrictions["junior_dob_start"],
+                    UnitMembers.dob <= age_restrictions["junior_dob_end"]
+                )
+            )
+        elif event.seniority_restriction == SeniorityCategory.SENIOR:
+            stmt = stmt.where(
+                and_(
+                    UnitMembers.dob >= age_restrictions["senior_dob_start"],
+                    UnitMembers.dob <= age_restrictions["senior_dob_end"]
+                )
+            )
+    
     stmt = stmt.order_by(UnitMembers.name)
     
     result = await db.execute(stmt)
@@ -425,10 +464,13 @@ async def generate_individual_chest_number(
     - If not, generate based on seniority: 100-199 for junior, 200-299 for senior
     - Increment from last chest number
     """
-    # Check if participant already has a chest number
+    # Check if participant already has a chest number from any event
     stmt = select(IndividualEventParticipation.chest_number).where(
-        IndividualEventParticipation.participant_id == participant.id
-    ).order_by(IndividualEventParticipation.created_on)
+        and_(
+            IndividualEventParticipation.participant_id == participant.id,
+            IndividualEventParticipation.chest_number.isnot(None)
+        )
+    ).order_by(IndividualEventParticipation.created_on).limit(1)
     result = await db.execute(stmt)
     existing_chest = result.scalar_one_or_none()
     
@@ -444,9 +486,11 @@ async def generate_individual_chest_number(
         base_number = 100
     
     # Get last chest number
-    stmt = select(IndividualEventParticipation.chest_number).order_by(
+    stmt = select(IndividualEventParticipation.chest_number).where(
+        IndividualEventParticipation.chest_number.isnot(None)
+    ).order_by(
         IndividualEventParticipation.chest_number.desc()
-    )
+    ).limit(1)
     result = await db.execute(stmt)
     last_chest = result.scalar_one_or_none()
     
@@ -480,11 +524,12 @@ async def generate_group_chest_number(
     ).where(
         and_(
             GroupEventParticipation.group_event_id == event.id,
+            GroupEventParticipation.chest_number.isnot(None),
             UnitMembers.registered_user_id.in_(
                 select(CustomUser.id).where(CustomUser.unit_name_id == unit_id)
             )
         )
-    ).order_by(GroupEventParticipation.created_on.desc())
+    ).order_by(GroupEventParticipation.created_on.desc()).limit(1)
     result = await db.execute(stmt)
     existing_chest = result.scalar_one_or_none()
     
@@ -493,8 +538,11 @@ async def generate_group_chest_number(
     
     # Get last team number for this event
     stmt = select(GroupEventParticipation.chest_number).where(
-        GroupEventParticipation.group_event_id == event.id
-    ).order_by(GroupEventParticipation.created_on.desc())
+        and_(
+            GroupEventParticipation.group_event_id == event.id,
+            GroupEventParticipation.chest_number.isnot(None)
+        )
+    ).order_by(GroupEventParticipation.created_on.desc()).limit(1)
     result = await db.execute(stmt)
     last_chest = result.scalar_one_or_none()
     

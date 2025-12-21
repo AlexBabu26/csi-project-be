@@ -65,90 +65,102 @@ async def seed_events():
         print(f"Categories created: {category_map}")
         
         # Step 3: Insert Individual Events (36 events)
+        # Format: (name, category_id, is_mandatory, gender_restriction, seniority_restriction)
+        # Gender: 'Male', 'Female', or None (any)
+        # Seniority: 'Junior', 'Senior', or None (any)
         print("Creating individual events...")
         
         individual_events = [
             # MUSIC - Individual (18 events)
-            ("Solo Eastern Jr Boys", category_map["MUSIC"], True),
-            ("Solo Eastern Jr Girls", category_map["MUSIC"], True),
-            ("Solo Eastern Sr Boys", category_map["MUSIC"], True),
-            ("Solo Eastern Sr Girls", category_map["MUSIC"], True),
-            ("Solo Western Jr Boys", category_map["MUSIC"], True),
-            ("Solo Western Jr Girls", category_map["MUSIC"], True),
-            ("Solo Western Sr Boys", category_map["MUSIC"], True),
-            ("Solo Western Sr Girls", category_map["MUSIC"], True),
-            ("Light music Boys", category_map["MUSIC"], True),
-            ("Light music Girls", category_map["MUSIC"], True),
-            ("Poetry Recitation", category_map["MUSIC"], False),
-            ("Classical Music", category_map["MUSIC"], False),
-            ("Karoke Song", category_map["MUSIC"], False),
-            ("Organ Recital", category_map["MUSIC"], True),
-            ("Instrumental Music Wind", category_map["MUSIC"], False),
-            ("Instrumental Music String", category_map["MUSIC"], False),
-            ("Instrumental Music Percussion", category_map["MUSIC"], False),
-            ("Guitar", category_map["MUSIC"], False),
+            ("Solo Eastern Jr Boys", category_map["MUSIC"], True, "Male", "Junior"),
+            ("Solo Eastern Jr Girls", category_map["MUSIC"], True, "Female", "Junior"),
+            ("Solo Eastern Sr Boys", category_map["MUSIC"], True, "Male", "Senior"),
+            ("Solo Eastern Sr Girls", category_map["MUSIC"], True, "Female", "Senior"),
+            ("Solo Western Jr Boys", category_map["MUSIC"], True, "Male", "Junior"),
+            ("Solo Western Jr Girls", category_map["MUSIC"], True, "Female", "Junior"),
+            ("Solo Western Sr Boys", category_map["MUSIC"], True, "Male", "Senior"),
+            ("Solo Western Sr Girls", category_map["MUSIC"], True, "Female", "Senior"),
+            ("Light music Boys", category_map["MUSIC"], True, "Male", None),  # Any seniority
+            ("Light music Girls", category_map["MUSIC"], True, "Female", None),  # Any seniority
+            ("Poetry Recitation", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Classical Music", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Karoke Song", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Organ Recital", category_map["MUSIC"], True, None, None),  # Open to all
+            ("Instrumental Music Wind", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Instrumental Music String", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Instrumental Music Percussion", category_map["MUSIC"], False, None, None),  # Open to all
+            ("Guitar", category_map["MUSIC"], False, None, None),  # Open to all
             
-            # FINE ARTS - Individual (3 events)
-            ("Pencil drawing", category_map["FINE ARTS"], True),
-            ("Cartoon", category_map["FINE ARTS"], True),
-            ("Water Colour", category_map["FINE ARTS"], True),
+            # FINE ARTS - Individual (3 events) - All open to any gender/seniority
+            ("Pencil drawing", category_map["FINE ARTS"], True, None, None),
+            ("Cartoon", category_map["FINE ARTS"], True, None, None),
+            ("Water Colour", category_map["FINE ARTS"], True, None, None),
             
-            # STAGE EVENTS - Individual (3 events)
-            ("Fancy Dress", category_map["STAGE EVENTS"], True),
-            ("Monoact", category_map["STAGE EVENTS"], True),
-            ("Mimicry", category_map["STAGE EVENTS"], True),
+            # STAGE EVENTS - Individual (3 events) - All open to any gender/seniority
+            ("Fancy Dress", category_map["STAGE EVENTS"], True, None, None),
+            ("Monoact", category_map["STAGE EVENTS"], True, None, None),
+            ("Mimicry", category_map["STAGE EVENTS"], True, None, None),
             
             # LITERARY EVENTS - Individual (12 events)
-            ("Poetry English", category_map["LITERARY EVENTS"], False),
-            ("Poetry Malayalam", category_map["LITERARY EVENTS"], False),
-            ("Short Story English", category_map["LITERARY EVENTS"], False),
-            ("Short Story Malayalam", category_map["LITERARY EVENTS"], False),
-            ("Essay Eng Jr", category_map["LITERARY EVENTS"], False),
-            ("Essay Mal Jr", category_map["LITERARY EVENTS"], False),
-            ("Essay Eng Sr", category_map["LITERARY EVENTS"], False),
-            ("Essay Mal Sr", category_map["LITERARY EVENTS"], False),
-            ("Extempore Mal Jr", category_map["LITERARY EVENTS"], True),
-            ("Extempore Mal Sr", category_map["LITERARY EVENTS"], True),
-            ("Extempore Eng Jr", category_map["LITERARY EVENTS"], True),
-            ("Extempore Eng Sr", category_map["LITERARY EVENTS"], True),
+            ("Poetry English", category_map["LITERARY EVENTS"], False, None, None),  # Open to all
+            ("Poetry Malayalam", category_map["LITERARY EVENTS"], False, None, None),  # Open to all
+            ("Short Story English", category_map["LITERARY EVENTS"], False, None, None),  # Open to all
+            ("Short Story Malayalam", category_map["LITERARY EVENTS"], False, None, None),  # Open to all
+            ("Essay Eng Jr", category_map["LITERARY EVENTS"], False, None, "Junior"),  # Junior only
+            ("Essay Mal Jr", category_map["LITERARY EVENTS"], False, None, "Junior"),  # Junior only
+            ("Essay Eng Sr", category_map["LITERARY EVENTS"], False, None, "Senior"),  # Senior only
+            ("Essay Mal Sr", category_map["LITERARY EVENTS"], False, None, "Senior"),  # Senior only
+            ("Extempore Mal Jr", category_map["LITERARY EVENTS"], True, None, "Junior"),  # Junior only
+            ("Extempore Mal Sr", category_map["LITERARY EVENTS"], True, None, "Senior"),  # Senior only
+            ("Extempore Eng Jr", category_map["LITERARY EVENTS"], True, None, "Junior"),  # Junior only
+            ("Extempore Eng Sr", category_map["LITERARY EVENTS"], True, None, "Senior"),  # Senior only
         ]
         
-        for name, cat_id, is_mandatory in individual_events:
+        for name, cat_id, is_mandatory, gender, seniority in individual_events:
             await session.execute(text("""
-                INSERT INTO individual_event (name, category_id, is_mandatory, description, created_on)
-                VALUES (:name, :cat_id, :is_mandatory, NULL, NOW())
-            """), {"name": name, "cat_id": cat_id, "is_mandatory": is_mandatory})
+                INSERT INTO individual_event (name, category_id, is_mandatory, gender_restriction, seniority_restriction, description, created_on)
+                VALUES (:name, :cat_id, :is_mandatory, :gender, :seniority, NULL, NOW())
+            """), {
+                "name": name, 
+                "cat_id": cat_id, 
+                "is_mandatory": is_mandatory,
+                "gender": gender,
+                "seniority": seniority
+            })
         
         await session.commit()
         print(f"Created {len(individual_events)} individual events.")
         
         # Step 4: Insert Group Events (9 events)
+        # Format: (name, category_id, is_mandatory, gender, seniority, min_limit, max_limit, per_unit_limit)
         print("Creating group events...")
         
-        # Format: (name, category_id, is_mandatory, min_limit, max_limit, per_unit_limit)
         group_events = [
-            # MUSIC - Group (4 events)
-            ("Fusion", category_map["MUSIC"], False, 3, 8, 1),
-            ("Group Song", category_map["MUSIC"], True, 3, 8, 1),
-            ("Quartet", category_map["MUSIC"], True, 4, 4, 1),
-            ("Octect", category_map["MUSIC"], False, 8, 8, 1),
+            # MUSIC - Group (4 events) - All open to any gender/seniority
+            ("Fusion", category_map["MUSIC"], False, None, None, 3, 8, 1),
+            ("Group Song", category_map["MUSIC"], True, None, None, 3, 8, 1),
+            ("Quartet", category_map["MUSIC"], True, None, None, 4, 4, 1),
+            ("Octect", category_map["MUSIC"], False, None, None, 8, 8, 1),
             
-            # STAGE EVENTS - Group (5 events)
-            ("Tableau", category_map["STAGE EVENTS"], False, 4, 8, 1),
-            ("Mime", category_map["STAGE EVENTS"], False, 5, 8, 1),
-            ("Kadhaprasangam", category_map["STAGE EVENTS"], False, 4, 8, 1),
-            ("Skit", category_map["STAGE EVENTS"], False, 5, 10, 1),
-            ("Margamkali", category_map["STAGE EVENTS"], False, 5, 9, 1),
+            # STAGE EVENTS - Group (5 events) - All open to any gender/seniority
+            ("Tableau", category_map["STAGE EVENTS"], False, None, None, 4, 8, 1),
+            ("Mime", category_map["STAGE EVENTS"], False, None, None, 5, 8, 1),
+            ("Kadhaprasangam", category_map["STAGE EVENTS"], False, None, None, 4, 8, 1),
+            ("Skit", category_map["STAGE EVENTS"], False, None, None, 5, 10, 1),
+            ("Margamkali", category_map["STAGE EVENTS"], False, None, None, 5, 9, 1),
         ]
         
-        for name, cat_id, is_mandatory, min_limit, max_limit, per_unit in group_events:
+        for name, cat_id, is_mandatory, gender, seniority, min_limit, max_limit, per_unit in group_events:
             await session.execute(text("""
-                INSERT INTO group_event (name, category_id, is_mandatory, min_allowed_limit, max_allowed_limit, per_unit_allowed_limit, description, created_on)
-                VALUES (:name, :cat_id, :is_mandatory, :min_limit, :max_limit, :per_unit, NULL, NOW())
+                INSERT INTO group_event (name, category_id, is_mandatory, gender_restriction, seniority_restriction, 
+                                        min_allowed_limit, max_allowed_limit, per_unit_allowed_limit, description, created_on)
+                VALUES (:name, :cat_id, :is_mandatory, :gender, :seniority, :min_limit, :max_limit, :per_unit, NULL, NOW())
             """), {
                 "name": name, 
                 "cat_id": cat_id, 
                 "is_mandatory": is_mandatory,
+                "gender": gender,
+                "seniority": seniority,
                 "min_limit": min_limit,
                 "max_limit": max_limit,
                 "per_unit": per_unit
@@ -158,14 +170,14 @@ async def seed_events():
         print(f"Created {len(group_events)} group events.")
         
         # Summary
-        print("\n" + "="*50)
+        print("\n" + "="*80)
         print("SEEDING COMPLETE!")
-        print("="*50)
+        print("="*80)
         print(f"Categories: 4")
         print(f"Individual Events: {len(individual_events)}")
         print(f"Group Events: {len(group_events)}")
         print(f"Total Events: {len(individual_events) + len(group_events)}")
-        print("="*50)
+        print("="*80)
         
         # Print summary by category
         result = await session.execute(text("""
@@ -179,8 +191,22 @@ async def seed_events():
         print("\nEvents by Category:")
         for row in result.fetchall():
             print(f"  {row[0]}: {row[1]} individual, {row[2]} group")
+        
+        # Print events with restrictions
+        print("\n" + "="*80)
+        print("INDIVIDUAL EVENTS WITH RESTRICTIONS:")
+        print("="*80)
+        result = await session.execute(text("""
+            SELECT name, gender_restriction, seniority_restriction, is_mandatory
+            FROM individual_event
+            ORDER BY id
+        """))
+        for row in result.fetchall():
+            gender = row[1] or "Any"
+            seniority = row[2] or "Any"
+            mandatory = "M" if row[3] else "OP"
+            print(f"  {row[0]:40} | Gender: {gender:6} | Seniority: {seniority:6} | {mandatory}")
 
 
 if __name__ == "__main__":
     asyncio.run(seed_events())
-
