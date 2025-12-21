@@ -167,14 +167,23 @@ async def add_district_official(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Add a district official (create delegate account)."""
+    """
+    Add a district official (create delegate account).
+    
+    The username will be the DISTRICT NAME (e.g., 'THIRUVALLA', 'ADOOR').
+    This enables district-wise login for Kalamela and Conference modules.
+    
+    Default password is the official's phone number.
+    """
     official = await conference_service.add_conference_delegate_official(
         db, data.conference_id, data
     )
     return {
         "message": "District official added successfully",
         "official_id": official.id,
-        "username": official.username,
+        "username": official.username,  # This is now the district name
+        "district": official.username,
+        "default_password": "Phone number of the official",
     }
 
 

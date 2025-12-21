@@ -6,7 +6,7 @@ from app.common.config import get_settings
 from app.auth import router as auth_router
 from app.units.routers import user as units_user
 from app.conference.routers import official as conference_official, public as conference_public
-from app.admin.routers import units as admin_units, conference as admin_conference, system as admin_system, site as admin_site
+from app.admin.routers import units as admin_units, conference as admin_conference, system as admin_system, site as admin_site, users as admin_users
 from app.kalamela.routers import public as kalamela_public, official as kalamela_official, admin as kalamela_admin
 
 
@@ -39,6 +39,7 @@ app.include_router(admin_system.router, prefix="/api/admin/system", tags=["admin
 app.include_router(admin_system.router, prefix="/api/admin", tags=["admin-system-alias"])
 app.include_router(admin_system.router, prefix="/api/system", tags=["system-alias"])
 app.include_router(admin_site.router, prefix="/api", tags=["site-settings"])
+app.include_router(admin_users.router, prefix="/api/admin/users", tags=["admin-users"])
 app.include_router(kalamela_public.router, prefix="/api/kalamela", tags=["kalamela-public"])
 app.include_router(kalamela_official.router, prefix="/api/kalamela/official", tags=["kalamela-official"])
 app.include_router(kalamela_admin.router, prefix="/api/kalamela/admin", tags=["kalamela-admin"])

@@ -171,6 +171,9 @@ async def add_conference_delegate_official(
     """
     Create a district official account for conference delegation.
     
+    Username will be the DISTRICT NAME (e.g., 'THIRUVALLA', 'ADOOR') to enable
+    district-wise login for Kalamela and Conference modules.
+    
     Args:
         db: Database session
         conference_id: ID of the conference
@@ -180,7 +183,7 @@ async def add_conference_delegate_official(
         Created official user
     
     Raises:
-        HTTPException: If conference or member not found
+        HTTPException: If conference or member not found, or district already has an official
     """
     # Verify conference exists
     conference = await get_conference_by_id(db, conference_id)
@@ -210,6 +213,35 @@ async def add_conference_delegate_official(
     result = await db.execute(stmt)
     district = result.scalar_one()
     
+    # Check if district already has an official for this conference
+    stmt = select(CustomUser).where(
+        and_(
+            CustomUser.clergy_district_id == member_district_id,
+            CustomUser.user_type == UserType.DISTRICT_OFFICIAL,
+            CustomUser.conference_id == conference_id
+        )
+    )
+    result = await db.execute(stmt)
+    existing_official = result.scalar_one_or_none()
+    
+    if existing_official:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"District '{district.name}' already has an official for this conference. "
+                   f"Use the update endpoint to modify or reset password."
+        )
+    
+    # Check if username (district name) is already taken by another user type
+    stmt = select(CustomUser).where(CustomUser.username == district.name)
+    result = await db.execute(stmt)
+    existing_username = result.scalar_one_or_none()
+    
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Username '{district.name}' is already in use"
+        )
+    
     # Determine max conference member count based on district
     under_30_list = ['ADOOR', 'KOTTAYAM', 'KUMPALAMPOIKA', 'MALLAPPALLY', 'MAVELIKKARA', 'PALLOM', 'THIRUVALLA']
     under_25_list = ['ELANTHOOR', 'EATTUMANOOR', 'KODUKULANJI', 'MUNDAKKAYAM', 'PUNNAVELY']
@@ -220,13 +252,14 @@ async def add_conference_delegate_official(
     elif district.name in under_25_list:
         max_conference_member_count = 20
     
-    # Create password (phone number)
+    # Create password (phone number of the official)
     password = str(member.number)
     
-    # Create official user
+    # Create official user with DISTRICT NAME as username
+    # This enables district-wise login for Kalamela and Conference modules
     official_user = CustomUser(
-        username=str(member.number),
-        email=str(member.number),
+        username=district.name,  # District name as username (e.g., 'THIRUVALLA')
+        email=f"{district.name.lower().replace(' ', '_')}@district.local",  # Unique email
         first_name=member.name,
         phone_number=str(member.number),
         conference_id=conference_id,
