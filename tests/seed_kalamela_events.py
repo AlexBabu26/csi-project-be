@@ -46,11 +46,11 @@ async def seed_events():
         ]
         
         await session.execute(text("""
-            INSERT INTO event_category (name, description) VALUES
-            (:name1, :desc1),
-            (:name2, :desc2),
-            (:name3, :desc3),
-            (:name4, :desc4)
+            INSERT INTO event_category (name, description, created_on, updated_on) VALUES
+            (:name1, :desc1, NOW(), NOW()),
+            (:name2, :desc2, NOW(), NOW()),
+            (:name3, :desc3, NOW(), NOW()),
+            (:name4, :desc4, NOW(), NOW())
         """), {
             "name1": categories[0][0], "desc1": categories[0][1],
             "name2": categories[1][0], "desc2": categories[1][1],
