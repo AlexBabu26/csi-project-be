@@ -375,7 +375,8 @@ async def admin_home(
     individual_events = list(result_ind.scalars().all())
     
     stmt_grp = select(GroupEvent).options(
-        selectinload(GroupEvent.registration_fee)
+        selectinload(GroupEvent.registration_fee),
+        selectinload(GroupEvent.event_category)
     ).order_by(GroupEvent.name)
     result_grp = await db.execute(stmt_grp)
     group_events = list(result_grp.scalars().all())
@@ -390,6 +391,10 @@ async def admin_home(
             "registration_fee_id": e.registration_fee_id,
             "registration_fee_amount": e.registration_fee.amount if e.registration_fee else None,
             "description": e.description,
+            "is_mandatory": e.is_mandatory,
+            "is_active": e.is_active,
+            "gender_restriction": e.gender_restriction.value if e.gender_restriction else None,
+            "seniority_restriction": e.seniority_restriction.value if e.seniority_restriction else None,
         }
         for e in individual_events
     ]
@@ -399,11 +404,17 @@ async def admin_home(
             "id": e.id,
             "name": e.name,
             "description": e.description,
+            "category_id": e.category_id,
+            "category_name": e.event_category.name if e.event_category else None,
             "registration_fee_id": e.registration_fee_id,
             "registration_fee_amount": e.registration_fee.amount if e.registration_fee else None,
             "min_allowed_limit": e.min_allowed_limit,
             "max_allowed_limit": e.max_allowed_limit,
             "per_unit_allowed_limit": e.per_unit_allowed_limit,
+            "is_mandatory": e.is_mandatory,
+            "is_active": e.is_active,
+            "gender_restriction": e.gender_restriction.value if e.gender_restriction else None,
+            "seniority_restriction": e.seniority_restriction.value if e.seniority_restriction else None,
         }
         for e in group_events
     ]
