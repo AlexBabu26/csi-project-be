@@ -680,6 +680,14 @@ async def update_individual_event(
         event.registration_fee_id = data.registration_fee_id
     if data.description is not None:
         event.description = data.description
+    if data.is_mandatory is not None:
+        event.is_mandatory = data.is_mandatory
+    if data.is_active is not None:
+        event.is_active = data.is_active
+    if data.gender_restriction is not None:
+        event.gender_restriction = data.gender_restriction
+    if data.seniority_restriction is not None:
+        event.seniority_restriction = data.seniority_restriction
     
     await db.commit()
     await db.refresh(event)
@@ -707,6 +715,10 @@ async def update_individual_event(
         "registration_fee_id": event.registration_fee_id,
         "registration_fee_amount": registration_fee_amount,
         "description": event.description,
+        "is_mandatory": event.is_mandatory,
+        "is_active": event.is_active,
+        "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+        "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
         "created_on": event.created_on,
     }
 
@@ -778,6 +790,16 @@ async def update_group_event(
         event.name = data.name
     if data.description is not None:
         event.description = data.description
+    if data.category_id is not None:
+        # Validate category_id
+        stmt = select(EventCategory).where(EventCategory.id == data.category_id)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid category_id. Category does not exist."
+            )
+        event.category_id = data.category_id
     if data.registration_fee_id is not None:
         # Validate registration_fee_id
         stmt = select(RegistrationFee).where(RegistrationFee.id == data.registration_fee_id)
@@ -794,11 +816,26 @@ async def update_group_event(
         event.min_allowed_limit = data.min_allowed_limit
     if data.per_unit_allowed_limit is not None:
         event.per_unit_allowed_limit = data.per_unit_allowed_limit
+    if data.is_mandatory is not None:
+        event.is_mandatory = data.is_mandatory
+    if data.is_active is not None:
+        event.is_active = data.is_active
+    if data.gender_restriction is not None:
+        event.gender_restriction = data.gender_restriction
+    if data.seniority_restriction is not None:
+        event.seniority_restriction = data.seniority_restriction
     
     await db.commit()
     await db.refresh(event)
     
-    # Load the registration fee relationship
+    # Load the category and registration fee relationships
+    category_name = None
+    if event.category_id:
+        stmt = select(EventCategory).where(EventCategory.id == event.category_id)
+        result = await db.execute(stmt)
+        category = result.scalar_one_or_none()
+        category_name = category.name if category else None
+    
     registration_fee_amount = None
     if event.registration_fee_id:
         stmt = select(RegistrationFee).where(RegistrationFee.id == event.registration_fee_id)
@@ -809,12 +846,18 @@ async def update_group_event(
     return {
         "id": event.id,
         "name": event.name,
+        "category_id": event.category_id,
+        "category_name": category_name,
         "description": event.description,
         "registration_fee_id": event.registration_fee_id,
         "registration_fee_amount": registration_fee_amount,
         "max_allowed_limit": event.max_allowed_limit,
         "min_allowed_limit": event.min_allowed_limit,
         "per_unit_allowed_limit": event.per_unit_allowed_limit,
+        "is_mandatory": event.is_mandatory,
+        "is_active": event.is_active,
+        "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+        "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
         "created_on": event.created_on,
     }
 

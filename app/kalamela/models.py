@@ -99,6 +99,7 @@ class IndividualEvent(Base):
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     gender_restriction: Mapped[Optional[GenderRestriction]] = mapped_column(
         SAEnum(GenderRestriction, values_callable=lambda x: [e.value for e in x]),
         nullable=True
@@ -130,6 +131,7 @@ class GroupEvent(Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     registration_fee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("registration_fee.id"), nullable=True)
     is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     gender_restriction: Mapped[Optional[GenderRestriction]] = mapped_column(
         SAEnum(GenderRestriction, values_callable=lambda x: [e.value for e in x], name='group_gender_restriction_enum'),
         nullable=True

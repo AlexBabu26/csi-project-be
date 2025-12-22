@@ -118,8 +118,8 @@ async def seed_events():
         
         for name, cat_id, is_mandatory, gender, seniority in individual_events:
             await session.execute(text("""
-                INSERT INTO individual_event (name, category_id, is_mandatory, gender_restriction, seniority_restriction, description, created_on)
-                VALUES (:name, :cat_id, :is_mandatory, :gender, :seniority, NULL, NOW())
+                INSERT INTO individual_event (name, category_id, is_mandatory, is_active, gender_restriction, seniority_restriction, description, created_on)
+                VALUES (:name, :cat_id, :is_mandatory, true, :gender, :seniority, NULL, NOW())
             """), {
                 "name": name, 
                 "cat_id": cat_id, 
@@ -152,9 +152,9 @@ async def seed_events():
         
         for name, cat_id, is_mandatory, gender, seniority, min_limit, max_limit, per_unit in group_events:
             await session.execute(text("""
-                INSERT INTO group_event (name, category_id, is_mandatory, gender_restriction, seniority_restriction, 
+                INSERT INTO group_event (name, category_id, is_mandatory, is_active, gender_restriction, seniority_restriction, 
                                         min_allowed_limit, max_allowed_limit, per_unit_allowed_limit, description, created_on)
-                VALUES (:name, :cat_id, :is_mandatory, :gender, :seniority, :min_limit, :max_limit, :per_unit, NULL, NOW())
+                VALUES (:name, :cat_id, :is_mandatory, true, :gender, :seniority, :min_limit, :max_limit, :per_unit, NULL, NOW())
             """), {
                 "name": name, 
                 "cat_id": cat_id, 

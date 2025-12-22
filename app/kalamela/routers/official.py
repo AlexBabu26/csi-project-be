@@ -122,6 +122,13 @@ async def list_district_members(
                     detail=f"Individual event with ID {event_id} not found"
                 )
             
+            # Check if event is active
+            if not event.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Event '{event.name}' is not active"
+                )
+            
             # Get already registered members for this event
             stmt_registered = select(IndividualEventParticipation.participant_id).where(
                 IndividualEventParticipation.individual_event_id == event_id
@@ -136,6 +143,7 @@ async def list_district_members(
                 "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
                 "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
                 "is_mandatory": event.is_mandatory,
+                "is_active": event.is_active,
                 "already_registered_count": len(already_registered_ids),
             }
         else:  # group
@@ -147,6 +155,13 @@ async def list_district_members(
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Group event with ID {event_id} not found"
+                )
+            
+            # Check if event is active
+            if not event.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Event '{event.name}' is not active"
                 )
             
             # Get already registered members for this event
@@ -163,6 +178,7 @@ async def list_district_members(
                 "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
                 "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
                 "is_mandatory": event.is_mandatory,
+                "is_active": event.is_active,
                 "min_allowed_limit": event.min_allowed_limit,
                 "max_allowed_limit": event.max_allowed_limit,
                 "already_registered_count": len(already_registered_ids),

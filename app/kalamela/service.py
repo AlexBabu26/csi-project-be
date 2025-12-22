@@ -188,15 +188,27 @@ SENIOR_DOB_END = date(2005, 1, 10)
 async def list_all_individual_events(
     db: AsyncSession,
     district_id: int,
+    include_inactive: bool = False,
 ) -> Dict[str, List[Dict]]:
     """
     List all individual events with participation counts and remaining slots.
+    
+    Args:
+        db: Database session
+        district_id: District ID for counting participations
+        include_inactive: If True, include inactive events (for admin). Default False.
     
     Returns dict grouped by category.
     """
     stmt = select(IndividualEvent).options(
         selectinload(IndividualEvent.event_category)
-    ).order_by(IndividualEvent.category_id, IndividualEvent.name)
+    )
+    
+    # Filter by is_active unless include_inactive is True
+    if not include_inactive:
+        stmt = stmt.where(IndividualEvent.is_active == True)
+    
+    stmt = stmt.order_by(IndividualEvent.category_id, IndividualEvent.name)
     result = await db.execute(stmt)
     events = list(result.scalars().all())
     
@@ -229,6 +241,10 @@ async def list_all_individual_events(
                 "category_id": event.category_id,
                 "category_name": event.event_category.name if event.event_category else None,
                 "registration_fee_id": event.registration_fee_id,
+                "is_mandatory": event.is_mandatory,
+                "is_active": event.is_active,
+                "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+                "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
             },
             "participation_count": count,
             "remaining_slots": remaining_slots,
@@ -240,11 +256,26 @@ async def list_all_individual_events(
 async def list_all_group_events(
     db: AsyncSession,
     user: CustomUser,
+    include_inactive: bool = False,
 ) -> Dict[str, Dict]:
-    """List all group events with team counts per district/unit."""
+    """
+    List all group events with team counts per district/unit.
+    
+    Args:
+        db: Database session
+        user: Current user for counting participations
+        include_inactive: If True, include inactive events (for admin). Default False.
+    """
     stmt = select(GroupEvent).options(
-        selectinload(GroupEvent.registration_fee)
-    ).order_by(GroupEvent.name)
+        selectinload(GroupEvent.registration_fee),
+        selectinload(GroupEvent.event_category)
+    )
+    
+    # Filter by is_active unless include_inactive is True
+    if not include_inactive:
+        stmt = stmt.where(GroupEvent.is_active == True)
+    
+    stmt = stmt.order_by(GroupEvent.name)
     result = await db.execute(stmt)
     events = list(result.scalars().all())
     
@@ -270,10 +301,16 @@ async def list_all_group_events(
             "id": event.id,
             "name": event.name,
             "description": event.description,
+            "category_id": event.category_id,
+            "category_name": event.event_category.name if event.event_category else None,
             "max_allowed_limit": event.max_allowed_limit,
             "min_allowed_limit": event.min_allowed_limit,
             "per_unit_allowed_limit": event.per_unit_allowed_limit,
             "registration_fee_id": event.registration_fee_id,
+            "is_mandatory": event.is_mandatory,
+            "is_active": event.is_active,
+            "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+            "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
             "count": count,
         }
     
