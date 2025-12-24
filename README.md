@@ -63,7 +63,7 @@ A FastAPI-based backend application for the CSI Madhya Kerala Diocese Youth Move
 6. **Start the development server**
    ```bash
    # Option 1: Using uvicorn directly
-   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   uvicorn main:app --host 0.0.0.0 --port 7000 --reload
    
    # Option 2: Using Python
    python main.py

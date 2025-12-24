@@ -184,10 +184,10 @@ class GroupEventParticipation(Base):
     participant_id: Mapped[int] = mapped_column(ForeignKey("unit_members.id"), nullable=False)
     chest_number: Mapped[Optional[str]] = mapped_column(String(50))
     added_by_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint("group_event_id", "participant_id", name="uq_group_event_per_participant"),
-        UniqueConstraint("group_event_id", "chest_number", name="uq_group_event_chest_number"),
     )
 
     group_event: Mapped[GroupEvent] = relationship("GroupEvent", back_populates="participations")

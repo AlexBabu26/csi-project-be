@@ -119,6 +119,7 @@ async def get_participation_limits(db: AsyncSession) -> Dict[str, int]:
         "max_individual_events_per_person": int(rules.get("max_individual_events_per_person", "5")),
         "max_participants_per_unit_per_event": int(rules.get("max_participants_per_unit_per_event", "2")),
         "max_groups_per_unit_per_group_event": int(rules.get("max_groups_per_unit_per_group_event", "1")),
+        "max_groups_per_district_per_group_event": 2,  # Fixed rule: max 2 teams per district
     }
 
 
@@ -742,6 +743,7 @@ async def add_group_participants(
     Validates:
     - Team limits
     - Max groups per unit per event (from DB rules)
+    - Max groups per district per event (max 2 teams per district)
     - Per-unit limits
     - Same-unit team detection
     """
@@ -813,7 +815,7 @@ async def add_group_participants(
     unit_group_count = result.scalar() or 0
     
     # Check if adding to existing team or new team
-    stmt = select(GroupEventParticipation.chest_number).join(
+    stmt = select(func.distinct(GroupEventParticipation.chest_number)).join(
         UnitMembers, GroupEventParticipation.participant_id == UnitMembers.id
     ).where(
         and_(
@@ -824,7 +826,34 @@ async def add_group_participants(
         )
     )
     result = await db.execute(stmt)
-    existing_chest = result.scalar_one_or_none()
+    _all_chest_rows = result.all()
+    existing_chest = _all_chest_rows[0][0] if len(_all_chest_rows) >= 1 else None
+    
+    # Check district quota (max 2 teams per district per event) - only when creating new team
+    if not existing_chest:
+        # Count distinct teams (chest numbers) from this district for this event
+        stmt = select(func.count(func.distinct(GroupEventParticipation.chest_number))).select_from(
+            GroupEventParticipation
+        ).join(
+            UnitMembers, GroupEventParticipation.participant_id == UnitMembers.id
+        ).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).join(
+            UnitName, CustomUser.unit_name_id == UnitName.id
+        ).where(
+            and_(
+                GroupEventParticipation.group_event_id == event.id,
+                UnitName.clergy_district_id == user.clergy_district_id
+            )
+        )
+        result = await db.execute(stmt)
+        district_team_count = result.scalar() or 0
+        
+        if district_team_count >= 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="District quota reached (max 2 teams per district per event)"
+            )
     
     if not existing_chest and unit_group_count >= max_groups_per_unit:
         raise HTTPException(
