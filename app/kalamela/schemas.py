@@ -327,6 +327,23 @@ class KalamelaPaymentResponse(BaseModel):
     created_on: datetime
 
 
+class KalamelaPaymentAdminResponse(BaseModel):
+    """Response schema for Kalamela payment with district info (admin view)."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    paid_by_id: int
+    paid_by_name: Optional[str]
+    district_id: Optional[int]
+    district_name: Optional[str]
+    individual_events_count: int
+    group_events_count: int
+    total_amount_to_pay: int
+    payment_proof_path: Optional[str]
+    payment_status: PaymentStatus
+    created_on: datetime
+
+
 # Appeal Schemas
 class AppealCreate(BaseModel):
     """Create schema for appeal."""

@@ -283,19 +283,28 @@ async def list_all_group_events(
     group_events_dict = {}
     
     for event in events:
-        # Count distinct units participating
-        stmt_count = select(func.count(func.distinct(UnitMembers.registered_user_id))).select_from(
+        # Count distinct teams (chest numbers) from this district for this event
+        stmt_team_count = select(func.count(func.distinct(GroupEventParticipation.chest_number))).select_from(
             GroupEventParticipation
         ).join(
             UnitMembers, GroupEventParticipation.participant_id == UnitMembers.id
+        ).join(
+            CustomUser, UnitMembers.registered_user_id == CustomUser.id
+        ).join(
+            UnitName, CustomUser.unit_name_id == UnitName.id
         ).where(
             and_(
                 GroupEventParticipation.group_event_id == event.id,
-                GroupEventParticipation.added_by_id == user.id
+                UnitName.clergy_district_id == user.clergy_district_id
             )
         )
-        result_count = await db.execute(stmt_count)
-        count = result_count.scalar() or 0
+        result_count = await db.execute(stmt_team_count)
+        district_team_count = result_count.scalar() or 0
+        
+        # Calculate remaining slots (max 2 teams per district)
+        max_teams_per_district = 2  # Fixed rule: max 2 teams per district per event
+        remaining_slots = max(0, max_teams_per_district - district_team_count)
+        is_registration_complete = remaining_slots == 0
         
         # Use event name as key and serialize event data
         group_events_dict[event.name] = {
@@ -312,7 +321,9 @@ async def list_all_group_events(
             "is_active": event.is_active,
             "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
             "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
-            "count": count,
+            "participation_count": district_team_count,  # Teams registered by this district
+            "remaining_slots": remaining_slots,          # Teams remaining for this district
+            "is_registration_complete": is_registration_complete,  # Easy boolean check
         }
     
     return group_events_dict

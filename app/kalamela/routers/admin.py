@@ -46,6 +46,7 @@ from app.kalamela.schemas import (
     AppealResponse,
     AppealReply,
     KalamelaPaymentResponse,
+    KalamelaPaymentAdminResponse,
     EventCategoryCreate,
     EventCategoryUpdate,
     EventCategoryResponse,
@@ -1117,18 +1118,37 @@ async def view_events_preview(
 
 
 # Payments
-@router.get("/payments", response_model=List[KalamelaPaymentResponse])
+@router.get("/payments", response_model=List[KalamelaPaymentAdminResponse])
 async def list_all_payments(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all payments."""
-    stmt = select(KalamelaPayments).order_by(KalamelaPayments.created_on.desc())
+    """List all payments with district info."""
+    stmt = select(KalamelaPayments).options(
+        selectinload(KalamelaPayments.paid_by).selectinload(CustomUser.clergy_district)
+    ).order_by(KalamelaPayments.created_on.desc())
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    payments = list(result.scalars().all())
+    
+    return [
+        KalamelaPaymentAdminResponse(
+            id=p.id,
+            paid_by_id=p.paid_by_id,
+            paid_by_name=p.paid_by.username if p.paid_by else None,
+            district_id=p.paid_by.clergy_district_id if p.paid_by else None,
+            district_name=p.paid_by.clergy_district.name if p.paid_by and p.paid_by.clergy_district else None,
+            individual_events_count=p.individual_events_count,
+            group_events_count=p.group_events_count,
+            total_amount_to_pay=p.total_amount_to_pay,
+            payment_proof_path=p.payment_proof_path,
+            payment_status=p.payment_status,
+            created_on=p.created_on,
+        )
+        for p in payments
+    ]
 
 
-@router.post("/payments/{payment_id}/approve", response_model=dict)
+@router.put("/payments/{payment_id}/approve", response_model=dict)
 async def approve_payment(
     payment_id: int,
     current_user: CustomUser = Depends(get_admin_user),
@@ -1139,7 +1159,7 @@ async def approve_payment(
     return {"message": "Payment approved successfully"}
 
 
-@router.post("/payments/{payment_id}/decline", response_model=dict)
+@router.put("/payments/{payment_id}/decline", response_model=dict)
 async def decline_payment(
     payment_id: int,
     current_user: CustomUser = Depends(get_admin_user),
