@@ -17,6 +17,7 @@ from app.kalamela.models import (
     GroupEventParticipation,
     KalamelaPayments,
     KalamelaExcludeMembers,
+    PaymentStatus,
 )
 from app.kalamela.schemas import (
     IndividualParticipationCreate,
@@ -678,23 +679,25 @@ async def preview_district_participation(
 
 @router.post("/payment", response_model=KalamelaPaymentResponse)
 async def create_payment(
+    file: UploadFile = File(..., description="Payment proof file (required)"),
     current_user: CustomUser = Depends(get_official_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
-    Create payment record based on current participations.
-    Automatically calculates counts.
+    Create payment record with proof file.
+    Automatically calculates counts based on current participations.
+    File upload is mandatory.
     """
     stats = await kalamela_service.get_district_statistics(
         db, current_user.clergy_district_id
     )
     
-    data = KalamelaPaymentCreate(
+    payment = await kalamela_service.create_kalamela_payment(
+        db, current_user, 
         individual_events_count=stats["individual_events_count"],
         group_events_count=stats["group_events_count"],
+        file=file,
     )
-    
-    payment = await kalamela_service.create_kalamela_payment(db, current_user, data)
     
     return payment
 
@@ -706,7 +709,10 @@ async def upload_payment_proof_endpoint(
     current_user: CustomUser = Depends(get_official_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Upload payment proof."""
+    """
+    Re-upload payment proof for a declined payment.
+    Only allowed when payment status is DECLINED.
+    """
     # Verify payment belongs to this user
     stmt = select(KalamelaPayments).where(KalamelaPayments.id == payment_id)
     result = await db.execute(stmt)
@@ -722,6 +728,13 @@ async def upload_payment_proof_endpoint(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only upload proof for your own payment"
+        )
+    
+    # Only allow re-upload for DECLINED payments
+    if payment.payment_status != PaymentStatus.DECLINED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot re-upload proof. Payment status is '{payment.payment_status.value}', must be 'Declined'"
         )
     
     payment = await kalamela_service.upload_payment_proof(db, payment_id, file)

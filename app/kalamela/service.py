@@ -1086,13 +1086,15 @@ async def update_group_scores_bulk(
 async def create_kalamela_payment(
     db: AsyncSession,
     user: CustomUser,
-    data: kala_schema.KalamelaPaymentCreate,
+    individual_events_count: int,
+    group_events_count: int,
+    file: UploadFile,
 ) -> KalamelaPayments:
     """
-    Create payment record.
+    Create payment record with proof file.
     
     Allows multiple records for audit trail, but only one active payment
-    (PENDING or PROOF_UPLOADED) per district at a time.
+    (PENDING) per district at a time.
     """
     # Check for existing active payment from this district
     stmt = select(KalamelaPayments).join(
@@ -1100,10 +1102,7 @@ async def create_kalamela_payment(
     ).where(
         and_(
             CustomUser.clergy_district_id == user.clergy_district_id,
-            KalamelaPayments.payment_status.in_([
-                PaymentStatus.PENDING,
-                PaymentStatus.PROOF_UPLOADED,
-            ])
+            KalamelaPayments.payment_status == PaymentStatus.PENDING
         )
     )
     result = await db.execute(stmt)
@@ -1112,7 +1111,7 @@ async def create_kalamela_payment(
     if existing_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An active payment already exists. Please upload proof to the existing payment or wait for admin review."
+            detail="An active payment already exists. Wait for admin review."
         )
     
     # Check if already paid
@@ -1133,14 +1132,18 @@ async def create_kalamela_payment(
             detail="Payment has already been approved for this district."
         )
     
-    total_amount = (data.individual_events_count * INDIVIDUAL_FEE + 
-                   data.group_events_count * GROUP_FEE)
+    # Upload proof file
+    _, file_path = save_upload_file(file, subdir="kalamela/payments")
+    
+    total_amount = (individual_events_count * INDIVIDUAL_FEE + 
+                   group_events_count * GROUP_FEE)
     
     payment = KalamelaPayments(
         paid_by_id=user.id,
-        individual_events_count=data.individual_events_count,
-        group_events_count=data.group_events_count,
+        individual_events_count=individual_events_count,
+        group_events_count=group_events_count,
         total_amount_to_pay=total_amount,
+        payment_proof_path=str(file_path),
         payment_status=PaymentStatus.PENDING,
     )
     
@@ -1156,7 +1159,10 @@ async def upload_payment_proof(
     payment_id: int,
     file: UploadFile,
 ) -> KalamelaPayments:
-    """Upload payment proof."""
+    """
+    Re-upload payment proof for a declined payment.
+    Sets status back to PENDING for admin review.
+    """
     stmt = select(KalamelaPayments).where(KalamelaPayments.id == payment_id)
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
@@ -1171,7 +1177,7 @@ async def upload_payment_proof(
     _, file_path = save_upload_file(file, subdir="kalamela/payments")
     
     payment.payment_proof_path = str(file_path)
-    payment.payment_status = PaymentStatus.PROOF_UPLOADED
+    payment.payment_status = PaymentStatus.PENDING  # Back to pending for review
     
     await db.commit()
     await db.refresh(payment)

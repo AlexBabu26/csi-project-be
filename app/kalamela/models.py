@@ -30,7 +30,6 @@ class RuleCategory(str, enum.Enum):
 
 class PaymentStatus(str, enum.Enum):
     PENDING = "Pending"
-    PROOF_UPLOADED = "Proof Uploaded"
     PAID = "Paid"
     DECLINED = "Declined"
 

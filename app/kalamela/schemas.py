@@ -17,7 +17,6 @@ class SeniorityCategory(str, Enum):
 class PaymentStatus(str, Enum):
     """Payment status enum."""
     PENDING = "Pending"
-    PROOF_UPLOADED = "Proof Uploaded"
     PAID = "Paid"
     DECLINED = "Declined"
 
