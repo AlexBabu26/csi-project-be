@@ -114,3 +114,4 @@ def downgrade() -> None:
     op.drop_column('group_event_score_card', 'rank')
     op.drop_column('group_event_score_card', 'grade_points')
 
+
