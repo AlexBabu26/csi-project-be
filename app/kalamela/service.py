@@ -1107,7 +1107,7 @@ async def create_kalamela_payment(
         )
     )
     result = await db.execute(stmt)
-    existing_active = result.scalar_one_or_none()
+    existing_active = result.scalars().first()
     
     if existing_active:
         raise HTTPException(
@@ -1125,7 +1125,7 @@ async def create_kalamela_payment(
         )
     )
     result = await db.execute(stmt)
-    already_paid = result.scalar_one_or_none()
+    already_paid = result.scalars().first()
     
     if already_paid:
         raise HTTPException(
@@ -1542,7 +1542,7 @@ async def get_district_statistics(
         KalamelaPayments.created_on.desc()
     )
     result = await db.execute(stmt)
-    payment = result.scalar_one_or_none()
+    payment = result.scalars().first()
     
     return {
         "individual_events_count": individual_count,
