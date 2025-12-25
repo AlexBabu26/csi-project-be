@@ -6,7 +6,7 @@ from typing import List, Optional
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     app_name: str = "CSI Kalamela FastAPI"
     debug: bool = False

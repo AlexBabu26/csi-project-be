@@ -227,11 +227,9 @@ class GroupParticipationResponse(BaseModel):
 
 # Score Card Schemas
 class IndividualScoreCreate(BaseModel):
-    """Create schema for individual score."""
+    """Create schema for individual score. Only marks needed - grade/points auto-calculated."""
     event_participation_id: int = Field(..., gt=0)
-    awarded_mark: int = Field(..., ge=0)
-    grade: Optional[str] = Field(None, max_length=10)
-    total_points: int = Field(..., ge=0)
+    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
 
 
 class IndividualScoreBulkCreate(BaseModel):
@@ -240,11 +238,9 @@ class IndividualScoreBulkCreate(BaseModel):
 
 
 class IndividualScoreUpdate(BaseModel):
-    """Update schema for individual score."""
+    """Update schema for individual score. Only marks needed - grade/points auto-calculated."""
     event_participation_id: int = Field(..., gt=0)
-    awarded_mark: int = Field(..., ge=0)
-    grade: Optional[str] = Field(None, max_length=10)
-    total_points: int = Field(..., ge=0)
+    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
 
 
 class IndividualScoreBulkUpdate(BaseModel):
@@ -253,7 +249,7 @@ class IndividualScoreBulkUpdate(BaseModel):
 
 
 class IndividualScoreResponse(BaseModel):
-    """Response schema for individual score."""
+    """Response schema for individual score with all calculated fields."""
     model_config = ConfigDict(from_attributes=True)
     
     id: int
@@ -261,17 +257,18 @@ class IndividualScoreResponse(BaseModel):
     participant_id: int
     awarded_mark: int
     grade: Optional[str]
+    grade_points: int
+    rank: Optional[int]
+    rank_points: int
     total_points: int
     added_on: datetime
 
 
 class GroupScoreCreate(BaseModel):
-    """Create schema for group score."""
+    """Create schema for group score. Only marks needed - grade/points auto-calculated."""
     event_name: str = Field(..., min_length=1, max_length=255)
     chest_number: str = Field(..., min_length=1, max_length=50)
-    awarded_mark: int = Field(..., ge=0)
-    grade: Optional[str] = Field(None, max_length=10)
-    total_points: int = Field(..., ge=0)
+    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
 
 
 class GroupScoreBulkCreate(BaseModel):
@@ -280,11 +277,9 @@ class GroupScoreBulkCreate(BaseModel):
 
 
 class GroupScoreUpdate(BaseModel):
-    """Update schema for group score."""
+    """Update schema for group score. Only marks needed - grade/points auto-calculated."""
     chest_number: str = Field(..., min_length=1, max_length=50)
-    awarded_mark: int = Field(..., ge=0)
-    grade: Optional[str] = Field(None, max_length=10)
-    total_points: int = Field(..., ge=0)
+    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
 
 
 class GroupScoreBulkUpdate(BaseModel):
@@ -293,7 +288,7 @@ class GroupScoreBulkUpdate(BaseModel):
 
 
 class GroupScoreResponse(BaseModel):
-    """Response schema for group score."""
+    """Response schema for group score with all calculated fields."""
     model_config = ConfigDict(from_attributes=True)
     
     id: int
@@ -301,6 +296,9 @@ class GroupScoreResponse(BaseModel):
     chest_number: str
     awarded_mark: int
     grade: Optional[str]
+    grade_points: int
+    rank: Optional[int]
+    rank_points: int
     total_points: int
     added_on: datetime
 

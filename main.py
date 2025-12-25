@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.common.config import get_settings
+from app.common import file_router
 from app.auth import router as auth_router
 from app.units.routers import user as units_user
 from app.conference.routers import official as conference_official, public as conference_public
@@ -29,6 +30,7 @@ app.add_middleware(
 )
 
 # Routers - all under /api prefix
+app.include_router(file_router.router, prefix="/api/files", tags=["files"])
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(units_user.router, prefix="/api/units", tags=["units"])
 app.include_router(conference_official.router, prefix="/api/conference/official", tags=["conference-official"])

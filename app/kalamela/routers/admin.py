@@ -1358,6 +1358,9 @@ async def view_individual_scores(
                     "participant_id": s.participant_id,
                     "awarded_mark": s.awarded_mark,
                     "grade": s.grade,
+                    "grade_points": getattr(s, 'grade_points', 0),
+                    "rank": getattr(s, 'rank', None),
+                    "rank_points": getattr(s, 'rank_points', 0),
                     "total_points": s.total_points,
                     "added_on": s.added_on.isoformat() if s.added_on else None,
                     "chest_number": s.participation.chest_number if s.participation else None,
@@ -1397,6 +1400,9 @@ async def view_group_scores(
                     "chest_number": s.chest_number,
                     "awarded_mark": s.awarded_mark,
                     "grade": s.grade,
+                    "grade_points": getattr(s, 'grade_points', 0),
+                    "rank": getattr(s, 'rank', None),
+                    "rank_points": getattr(s, 'rank_points', 0),
                     "total_points": s.total_points,
                     "added_on": s.added_on.isoformat() if s.added_on else None,
                 }
@@ -1404,6 +1410,113 @@ async def view_group_scores(
             ]
     
     return {"results_dict": results_dict}
+
+
+@router.post("/scores/individual/event/{event_id}", response_model=dict)
+async def add_individual_scores_for_event(
+    event_id: int,
+    scores: List[dict],
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Add scores for an individual event with auto-calculation.
+    
+    Grades and ranks are automatically calculated based on marks.
+    - Grade: A (60+) = 5pts, B (50-59) = 3pts, C (40-49) = 1pt
+    - Rank: 1st = 5pts, 2nd = 3pts, 3rd = 1pt
+    - Total = grade_points + rank_points
+    
+    Request body:
+    [
+        {"event_participation_id": 1, "awarded_mark": 85},
+        {"event_participation_id": 2, "awarded_mark": 72}
+    ]
+    """
+    score_cards = await kalamela_service.add_individual_scores_for_event(
+        db, event_id, scores
+    )
+    return {
+        "message": f"Added {len(score_cards)} scores with auto-calculated grades and ranks",
+        "scores": [
+            {
+                "id": s.id,
+                "event_participation_id": s.event_participation_id,
+                "awarded_mark": s.awarded_mark,
+                "grade": s.grade,
+                "grade_points": s.grade_points,
+                "rank": s.rank,
+                "rank_points": s.rank_points,
+                "total_points": s.total_points,
+            }
+            for s in score_cards
+        ]
+    }
+
+
+@router.post("/scores/group/event/{event_name}", response_model=dict)
+async def add_group_scores_for_event(
+    event_name: str,
+    scores: List[dict],
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Add scores for a group event with auto-calculation.
+    
+    Grades are calculated for display, but only rank points count for championship.
+    - Grade: A (60+), B (50-59), C (40-49) - for display
+    - Rank: 1st = 5pts, 2nd = 3pts, 3rd = 1pt
+    - Total = rank_points only (for group events)
+    
+    Request body:
+    [
+        {"chest_number": "G001", "awarded_mark": 85},
+        {"chest_number": "G002", "awarded_mark": 72}
+    ]
+    """
+    score_cards = await kalamela_service.add_group_scores_for_event(
+        db, event_name, scores
+    )
+    return {
+        "message": f"Added {len(score_cards)} scores with auto-calculated grades and ranks",
+        "scores": [
+            {
+                "id": s.id,
+                "event_name": s.event_name,
+                "chest_number": s.chest_number,
+                "awarded_mark": s.awarded_mark,
+                "grade": s.grade,
+                "grade_points": s.grade_points,
+                "rank": s.rank,
+                "rank_points": s.rank_points,
+                "total_points": s.total_points,
+            }
+            for s in score_cards
+        ]
+    }
+
+
+@router.post("/scores/recalculate/individual/{event_id}", response_model=dict)
+async def recalculate_individual_event_ranks(
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Recalculate ranks and points for an individual event after score updates."""
+    count = await kalamela_service.recalculate_event_ranks(db, event_id=event_id, is_group=False)
+    return {"message": f"Recalculated ranks for {count} scores"}
+
+
+@router.post("/scores/recalculate/group/{event_name}", response_model=dict)
+async def recalculate_group_event_ranks(
+    event_name: str,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Recalculate ranks and points for a group event after score updates."""
+    count = await kalamela_service.recalculate_event_ranks(db, event_name=event_name, is_group=True)
+    return {"message": f"Recalculated ranks for {count} scores"}
 
 
 @router.post("/scores/individual/update", response_model=dict)

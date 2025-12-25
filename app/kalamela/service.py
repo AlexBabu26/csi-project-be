@@ -185,6 +185,94 @@ SENIOR_DOB_START = date(1991, 1, 11)
 SENIOR_DOB_END = date(2005, 1, 10)
 
 
+# =============================================================================
+# Scoring System - Auto-calculation helpers
+# =============================================================================
+
+def calculate_grade(awarded_mark: int) -> tuple:
+    """
+    Calculate grade and grade points from marks (out of 100).
+    
+    Grade Thresholds:
+    - A Grade: 60% and above → 5 points
+    - B Grade: 50% to 59% → 3 points
+    - C Grade: 40% to 49% → 1 point
+    - Below 40%: No grade → 0 points
+    
+    Returns: (grade: str|None, grade_points: int)
+    """
+    if awarded_mark >= 60:
+        return ("A", 5)
+    elif awarded_mark >= 50:
+        return ("B", 3)
+    elif awarded_mark >= 40:
+        return ("C", 1)
+    else:
+        return (None, 0)
+
+
+def calculate_rank_points(rank: Optional[int]) -> int:
+    """
+    Calculate rank points from position.
+    
+    Rank Points:
+    - 1st Rank: 5 points
+    - 2nd Rank: 3 points
+    - 3rd Rank: 1 point
+    - 4th and below: 0 points
+    
+    Returns: rank_points (int)
+    """
+    if rank == 1:
+        return 5
+    elif rank == 2:
+        return 3
+    elif rank == 3:
+        return 1
+    else:
+        return 0
+
+
+def assign_ranks(scores: List[Dict], mark_key: str = "awarded_mark") -> List[Dict]:
+    """
+    Assign ranks to scores based on marks (descending order).
+    Handles ties by giving same rank to equal marks.
+    
+    Args:
+        scores: List of score dictionaries
+        mark_key: Key for marks in dictionary
+    
+    Returns: List with rank and rank_points added
+    """
+    if not scores:
+        return scores
+    
+    # Sort by marks descending
+    sorted_scores = sorted(scores, key=lambda x: x.get(mark_key, 0), reverse=True)
+    
+    current_rank = 1
+    previous_mark = None
+    
+    for idx, score in enumerate(sorted_scores):
+        current_mark = score.get(mark_key, 0)
+        
+        # Handle ties: same marks = same rank
+        if previous_mark is not None and current_mark < previous_mark:
+            current_rank = idx + 1
+        
+        # Only top 3 get rank points
+        if current_rank <= 3:
+            score["rank"] = current_rank
+            score["rank_points"] = calculate_rank_points(current_rank)
+        else:
+            score["rank"] = None
+            score["rank_points"] = 0
+        
+        previous_mark = current_mark
+    
+    return sorted_scores
+
+
 # Event Management Functions
 async def list_all_individual_events(
     db: AsyncSession,
@@ -980,11 +1068,285 @@ async def remove_group_participant(
 
 
 # Scoring Functions
+async def add_individual_scores_for_event(
+    db: AsyncSession,
+    event_id: int,
+    scores_data: List[Dict],  # [{event_participation_id, awarded_mark}]
+) -> List[IndividualEventScoreCard]:
+    """
+    Add scores for an individual event with auto-calculation of grades, ranks, and points.
+    
+    Individual events: total_points = grade_points + rank_points
+    
+    Args:
+        db: Database session
+        event_id: Event ID to score
+        scores_data: List of {event_participation_id, awarded_mark}
+    
+    Returns: List of created score cards
+    """
+    if not scores_data:
+        return []
+    
+    # Step 1: Validate participations and calculate grades
+    processed_scores = []
+    for score_input in scores_data:
+        participation_id = score_input.get("event_participation_id")
+        awarded_mark = score_input.get("awarded_mark", 0)
+        
+        # Validate marks
+        if awarded_mark < 0 or awarded_mark > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Marks must be between 0 and 100. Got {awarded_mark}"
+            )
+        
+        # Verify participation exists and belongs to this event
+        stmt = select(IndividualEventParticipation).where(
+            and_(
+                IndividualEventParticipation.id == participation_id,
+                IndividualEventParticipation.individual_event_id == event_id
+            )
+        )
+        result = await db.execute(stmt)
+        participation = result.scalar_one_or_none()
+        
+        if not participation:
+            continue
+        
+        # Calculate grade
+        grade, grade_points = calculate_grade(awarded_mark)
+        
+        processed_scores.append({
+            "event_participation_id": participation_id,
+            "participant_id": participation.participant_id,
+            "awarded_mark": awarded_mark,
+            "grade": grade,
+            "grade_points": grade_points,
+        })
+    
+    # Step 2: Assign ranks based on marks
+    processed_scores = assign_ranks(processed_scores, mark_key="awarded_mark")
+    
+    # Step 3: Calculate total points and create score cards
+    score_cards = []
+    for score in processed_scores:
+        # Individual events: total = grade_points + rank_points
+        total_points = score["grade_points"] + score["rank_points"]
+        
+        score_card = IndividualEventScoreCard(
+            event_participation_id=score["event_participation_id"],
+            participant_id=score["participant_id"],
+            awarded_mark=score["awarded_mark"],
+            grade=score["grade"],
+            grade_points=score["grade_points"],
+            rank=score["rank"],
+            rank_points=score["rank_points"],
+            total_points=total_points,
+        )
+        db.add(score_card)
+        score_cards.append(score_card)
+    
+    await db.commit()
+    
+    # Refresh to get IDs
+    for card in score_cards:
+        await db.refresh(card)
+    
+    return score_cards
+
+
+async def add_group_scores_for_event(
+    db: AsyncSession,
+    event_name: str,
+    scores_data: List[Dict],  # [{chest_number, awarded_mark}]
+) -> List[GroupEventScoreCard]:
+    """
+    Add scores for a group event with auto-calculation of grades, ranks, and points.
+    
+    Group events: total_points = rank_points only (for championship)
+    Grade is calculated for display but not added to total.
+    
+    Args:
+        db: Database session
+        event_name: Event name
+        scores_data: List of {chest_number, awarded_mark}
+    
+    Returns: List of created score cards
+    """
+    if not scores_data:
+        return []
+    
+    # Step 1: Validate and calculate grades
+    processed_scores = []
+    for score_input in scores_data:
+        chest_number = score_input.get("chest_number")
+        awarded_mark = score_input.get("awarded_mark", 0)
+        
+        if not chest_number:
+            continue
+        
+        # Validate marks
+        if awarded_mark < 0 or awarded_mark > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Marks must be between 0 and 100. Got {awarded_mark}"
+            )
+        
+        # Calculate grade (for display)
+        grade, grade_points = calculate_grade(awarded_mark)
+        
+        processed_scores.append({
+            "chest_number": chest_number,
+            "awarded_mark": awarded_mark,
+            "grade": grade,
+            "grade_points": grade_points,  # For display only
+        })
+    
+    # Step 2: Assign ranks based on marks
+    processed_scores = assign_ranks(processed_scores, mark_key="awarded_mark")
+    
+    # Step 3: Calculate total points and create score cards
+    score_cards = []
+    for score in processed_scores:
+        # Group events: total = rank_points only (5, 3, 1 scale)
+        total_points = score["rank_points"]
+        
+        score_card = GroupEventScoreCard(
+            event_name=event_name,
+            chest_number=score["chest_number"],
+            awarded_mark=score["awarded_mark"],
+            grade=score["grade"],
+            grade_points=score["grade_points"],
+            rank=score["rank"],
+            rank_points=score["rank_points"],
+            total_points=total_points,
+        )
+        db.add(score_card)
+        score_cards.append(score_card)
+    
+    await db.commit()
+    
+    # Refresh to get IDs
+    for card in score_cards:
+        await db.refresh(card)
+    
+    return score_cards
+
+
+async def recalculate_event_ranks(
+    db: AsyncSession,
+    event_id: Optional[int] = None,
+    event_name: Optional[str] = None,
+    is_group: bool = False,
+) -> int:
+    """
+    Recalculate ranks for an event after score updates.
+    
+    Args:
+        db: Database session
+        event_id: Individual event ID (for individual events)
+        event_name: Event name (for group events)
+        is_group: True for group events, False for individual
+    
+    Returns: Number of scores updated
+    """
+    if is_group:
+        if not event_name:
+            raise ValueError("event_name required for group events")
+        
+        # Get all scores for this group event
+        stmt = select(GroupEventScoreCard).where(
+            GroupEventScoreCard.event_name == event_name
+        ).order_by(GroupEventScoreCard.awarded_mark.desc())
+        result = await db.execute(stmt)
+        scores = list(result.scalars().all())
+        
+        if not scores:
+            return 0
+        
+        # Recalculate ranks
+        current_rank = 1
+        previous_mark = None
+        
+        for idx, score in enumerate(scores):
+            # Recalculate grade
+            grade, grade_points = calculate_grade(score.awarded_mark)
+            score.grade = grade
+            score.grade_points = grade_points
+            
+            # Handle ties
+            if previous_mark is not None and score.awarded_mark < previous_mark:
+                current_rank = idx + 1
+            
+            if current_rank <= 3:
+                score.rank = current_rank
+                score.rank_points = calculate_rank_points(current_rank)
+            else:
+                score.rank = None
+                score.rank_points = 0
+            
+            # Group events: total = rank_points only
+            score.total_points = score.rank_points
+            
+            previous_mark = score.awarded_mark
+        
+        await db.commit()
+        return len(scores)
+    
+    else:
+        if not event_id:
+            raise ValueError("event_id required for individual events")
+        
+        # Get all scores for this individual event
+        stmt = select(IndividualEventScoreCard).join(
+            IndividualEventParticipation,
+            IndividualEventScoreCard.event_participation_id == IndividualEventParticipation.id
+        ).where(
+            IndividualEventParticipation.individual_event_id == event_id
+        ).order_by(IndividualEventScoreCard.awarded_mark.desc())
+        result = await db.execute(stmt)
+        scores = list(result.scalars().all())
+        
+        if not scores:
+            return 0
+        
+        # Recalculate ranks
+        current_rank = 1
+        previous_mark = None
+        
+        for idx, score in enumerate(scores):
+            # Recalculate grade
+            grade, grade_points = calculate_grade(score.awarded_mark)
+            score.grade = grade
+            score.grade_points = grade_points
+            
+            # Handle ties
+            if previous_mark is not None and score.awarded_mark < previous_mark:
+                current_rank = idx + 1
+            
+            if current_rank <= 3:
+                score.rank = current_rank
+                score.rank_points = calculate_rank_points(current_rank)
+            else:
+                score.rank = None
+                score.rank_points = 0
+            
+            # Individual events: total = grade_points + rank_points
+            score.total_points = score.grade_points + score.rank_points
+            
+            previous_mark = score.awarded_mark
+        
+        await db.commit()
+        return len(scores)
+
+
+# Legacy scoring functions - kept for backward compatibility
 async def add_individual_scores_bulk(
     db: AsyncSession,
     data: kala_schema.IndividualScoreBulkCreate,
 ) -> List[IndividualEventScoreCard]:
-    """Bulk add individual scores."""
+    """Bulk add individual scores (legacy - use add_individual_scores_for_event instead)."""
     scores = []
     
     for score_data in data.participants:
@@ -998,12 +1360,18 @@ async def add_individual_scores_bulk(
         if not participation:
             continue
         
+        # Auto-calculate grade
+        grade, grade_points = calculate_grade(score_data.awarded_mark)
+        
         score = IndividualEventScoreCard(
             event_participation_id=score_data.event_participation_id,
             participant_id=participation.participant_id,
             awarded_mark=score_data.awarded_mark,
-            grade=score_data.grade,
-            total_points=score_data.total_points,
+            grade=grade,
+            grade_points=grade_points,
+            rank=None,  # Will be set by recalculate_event_ranks
+            rank_points=0,
+            total_points=grade_points,  # Initial, will be updated
         )
         db.add(score)
         scores.append(score)
@@ -1016,16 +1384,22 @@ async def add_group_scores_bulk(
     db: AsyncSession,
     data: kala_schema.GroupScoreBulkCreate,
 ) -> List[GroupEventScoreCard]:
-    """Bulk add group scores."""
+    """Bulk add group scores (legacy - use add_group_scores_for_event instead)."""
     scores = []
     
     for score_data in data.participants:
+        # Auto-calculate grade
+        grade, grade_points = calculate_grade(score_data.awarded_mark)
+        
         score = GroupEventScoreCard(
             event_name=score_data.event_name,
             chest_number=score_data.chest_number,
             awarded_mark=score_data.awarded_mark,
-            grade=score_data.grade,
-            total_points=score_data.total_points,
+            grade=grade,
+            grade_points=grade_points,
+            rank=None,  # Will be set by recalculate_event_ranks
+            rank_points=0,
+            total_points=0,  # Will be updated
         )
         db.add(score)
         scores.append(score)
@@ -1038,23 +1412,35 @@ async def update_individual_scores_bulk(
     db: AsyncSession,
     data: kala_schema.IndividualScoreBulkUpdate,
 ) -> List[IndividualEventScoreCard]:
-    """Bulk update individual scores (for appeals)."""
+    """Bulk update individual scores (for appeals). Auto-recalculates grades."""
     scores = []
+    event_ids_to_recalculate = set()
     
     for score_data in data.participants:
         stmt = select(IndividualEventScoreCard).where(
             IndividualEventScoreCard.event_participation_id == score_data.event_participation_id
-        )
+        ).options(selectinload(IndividualEventScoreCard.participation))
         result = await db.execute(stmt)
         score = result.scalar_one_or_none()
         
         if score:
+            # Update marks and auto-calculate grade
             score.awarded_mark = score_data.awarded_mark
-            score.grade = score_data.grade
-            score.total_points = score_data.total_points
+            grade, grade_points = calculate_grade(score_data.awarded_mark)
+            score.grade = grade
+            score.grade_points = grade_points
             scores.append(score)
+            
+            # Track event for rank recalculation
+            if score.participation:
+                event_ids_to_recalculate.add(score.participation.individual_event_id)
     
     await db.commit()
+    
+    # Recalculate ranks for affected events
+    for event_id in event_ids_to_recalculate:
+        await recalculate_event_ranks(db, event_id=event_id, is_group=False)
+    
     return scores
 
 
@@ -1062,8 +1448,9 @@ async def update_group_scores_bulk(
     db: AsyncSession,
     data: kala_schema.GroupScoreBulkUpdate,
 ) -> List[GroupEventScoreCard]:
-    """Bulk update group scores."""
+    """Bulk update group scores. Auto-recalculates grades and ranks."""
     scores = []
+    event_names_to_recalculate = set()
     
     for score_data in data.participants:
         stmt = select(GroupEventScoreCard).where(
@@ -1073,12 +1460,22 @@ async def update_group_scores_bulk(
         score = result.scalar_one_or_none()
         
         if score:
+            # Update marks and auto-calculate grade
             score.awarded_mark = score_data.awarded_mark
-            score.grade = score_data.grade
-            score.total_points = score_data.total_points
+            grade, grade_points = calculate_grade(score_data.awarded_mark)
+            score.grade = grade
+            score.grade_points = grade_points
             scores.append(score)
+            
+            # Track event for rank recalculation
+            event_names_to_recalculate.add(score.event_name)
     
     await db.commit()
+    
+    # Recalculate ranks for affected events
+    for event_name in event_names_to_recalculate:
+        await recalculate_event_ranks(db, event_name=event_name, is_group=True)
+    
     return scores
 
 
