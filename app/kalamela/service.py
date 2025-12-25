@@ -1088,7 +1088,51 @@ async def create_kalamela_payment(
     user: CustomUser,
     data: kala_schema.KalamelaPaymentCreate,
 ) -> KalamelaPayments:
-    """Create payment record."""
+    """
+    Create payment record.
+    
+    Allows multiple records for audit trail, but only one active payment
+    (PENDING or PROOF_UPLOADED) per district at a time.
+    """
+    # Check for existing active payment from this district
+    stmt = select(KalamelaPayments).join(
+        CustomUser, KalamelaPayments.paid_by_id == CustomUser.id
+    ).where(
+        and_(
+            CustomUser.clergy_district_id == user.clergy_district_id,
+            KalamelaPayments.payment_status.in_([
+                PaymentStatus.PENDING,
+                PaymentStatus.PROOF_UPLOADED,
+            ])
+        )
+    )
+    result = await db.execute(stmt)
+    existing_active = result.scalar_one_or_none()
+    
+    if existing_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An active payment already exists. Please upload proof to the existing payment or wait for admin review."
+        )
+    
+    # Check if already paid
+    stmt = select(KalamelaPayments).join(
+        CustomUser, KalamelaPayments.paid_by_id == CustomUser.id
+    ).where(
+        and_(
+            CustomUser.clergy_district_id == user.clergy_district_id,
+            KalamelaPayments.payment_status == PaymentStatus.PAID
+        )
+    )
+    result = await db.execute(stmt)
+    already_paid = result.scalar_one_or_none()
+    
+    if already_paid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment has already been approved for this district."
+        )
+    
     total_amount = (data.individual_events_count * INDIVIDUAL_FEE + 
                    data.group_events_count * GROUP_FEE)
     
