@@ -4,7 +4,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SeniorityCategory(str, Enum):
@@ -40,12 +40,30 @@ class GenderRestriction(str, Enum):
     FEMALE = "Female"
 
 
+class PaymentQrCodeResponse(BaseModel):
+    """Response schema for reusable payment QR codes."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    label: str
+    qr_code_url: str
+    is_active: bool
+    created_on: datetime
+    updated_on: datetime
+
+
 # Registration Fee Schemas
 class RegistrationFeeCreate(BaseModel):
     """Create schema for registration fee."""
     name: str = Field(..., min_length=1, max_length=255)
     event_type: EventType = Field(..., description="Type of event: 'individual' or 'group'")
     amount: int = Field(..., ge=0, description="Registration fee amount")
+    qr_code_id: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Foreign key to payment_qr_code table",
+    )
 
 
 class RegistrationFeeUpdate(BaseModel):
@@ -53,6 +71,11 @@ class RegistrationFeeUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     event_type: Optional[EventType] = Field(None, description="Type of event: 'individual' or 'group'")
     amount: Optional[int] = Field(None, ge=0, description="Registration fee amount")
+    qr_code_id: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Foreign key to payment_qr_code table",
+    )
 
 
 class RegistrationFeeResponse(BaseModel):
@@ -67,6 +90,8 @@ class RegistrationFeeResponse(BaseModel):
     updated_by_id: Optional[int]
     created_on: datetime
     updated_on: datetime
+    qr_code_id: Optional[int] = None
+    qr_code_url: Optional[str] = None
 
 
 # Event Category Schemas
@@ -185,6 +210,16 @@ class GroupEventResponse(BaseModel):
     min_allowed_limit: int
     per_unit_allowed_limit: int
     created_on: datetime
+
+
+class RegistrationFeeQrUpdate(BaseModel):
+    """Payload to attach or detach a payment QR code from a registration fee."""
+
+    qr_code_id: Optional[int] = Field(
+        None,
+        gt=0,
+        description="QR code ID to attach, or null to detach",
+    )
 
 
 # Participation Schemas
@@ -523,3 +558,56 @@ class KalamelaRulesGrouped(BaseModel):
     age_restrictions: dict
     participation_limits: dict
     fees: dict
+
+
+class ScheduleStatus(str, Enum):
+    """Status enum for event schedules."""
+    SCHEDULED = "Scheduled"
+    ONGOING = "Ongoing"
+    COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
+    POSTPONED = "Postponed"
+
+
+class EventScheduleCreate(BaseModel):
+    """Create schema for event schedule."""
+    event_id: int = Field(..., gt=0, description="Event ID (individual or group)")
+    event_type: EventType = Field(..., description="Type of event: 'individual' or 'group'")
+    stage_name: str = Field(..., min_length=1, max_length=255, description="Stage name/location")
+    start_time: datetime = Field(..., description="Event start time")
+    end_time: datetime = Field(..., description="Event end time")
+    status: ScheduleStatus = Field(default=ScheduleStatus.SCHEDULED, description="Schedule status")
+
+    @model_validator(mode='after')
+    def validate_end_time(self):
+        if self.end_time <= self.start_time:
+            raise ValueError('end_time must be after start_time')
+        return self
+
+
+class EventScheduleUpdate(BaseModel):
+    """Update schema for event schedule."""
+    event_id: Optional[int] = Field(None, gt=0)
+    event_type: Optional[EventType] = None
+    stage_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    status: Optional[ScheduleStatus] = None
+
+
+class EventScheduleResponse(BaseModel):
+    """Response schema for event schedule."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    event_id: int
+    event_type: EventType
+    stage_name: str
+    start_time: datetime
+    end_time: datetime
+    status: ScheduleStatus
+    created_on: datetime
+    updated_on: datetime
+    created_by_id: Optional[int] = None
+    # Optional: Include event name for convenience
+    event_name: Optional[str] = None

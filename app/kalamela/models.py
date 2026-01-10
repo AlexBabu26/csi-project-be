@@ -2,7 +2,18 @@ from datetime import date, datetime
 from typing import List, Optional
 import enum
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
@@ -45,6 +56,29 @@ class EventType(str, enum.Enum):
     GROUP = "group"
 
 
+class PaymentQrCode(Base):
+    """Reusable payment QR codes stored in cloud storage (B2)."""
+
+    __tablename__ = "payment_qr_code"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_on: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    # Reverse relationship to fees that use this QR code
+    registration_fees: Mapped[List["RegistrationFee"]] = relationship(
+        "RegistrationFee",
+        back_populates="qr_code",
+    )
+
+
 class EventCategory(Base):
     """Master table for Kalamela event categories."""
     __tablename__ = "event_category"
@@ -74,6 +108,12 @@ class RegistrationFee(Base):
     created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Optional reference to a shared payment QR code
+    qr_code_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("payment_qr_code.id"),
+        nullable=True,
+    )
+
     # Relationships
     created_by: Mapped[Optional["CustomUser"]] = relationship(
         "CustomUser", foreign_keys=[created_by_id]
@@ -86,6 +126,10 @@ class RegistrationFee(Base):
     )
     group_events: Mapped[List["GroupEvent"]] = relationship(
         "GroupEvent", back_populates="registration_fee"
+    )
+    qr_code: Mapped[Optional["PaymentQrCode"]] = relationship(
+        "PaymentQrCode",
+        back_populates="registration_fees",
     )
 
 
@@ -317,3 +361,44 @@ class KalamelaRules(Base):
     # Relationship
     updated_by: Mapped[Optional["CustomUser"]] = relationship("CustomUser")
 
+
+class ScheduleStatus(str, enum.Enum):
+    """Status enum for event schedules."""
+    SCHEDULED = "Scheduled"
+    ONGOING = "Ongoing"
+    COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
+    POSTPONED = "Postponed"
+
+
+class EventSchedule(Base):
+    """Model for event schedules/stages."""
+    __tablename__ = "event_schedule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[EventType] = mapped_column(
+        SAEnum(EventType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False
+    )
+    stage_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[ScheduleStatus] = mapped_column(
+        SAEnum(ScheduleStatus, values_callable=lambda x: [e.value for e in x]),
+        default=ScheduleStatus.SCHEDULED,
+        nullable=False
+    )
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_on: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("custom_user.id"),
+        nullable=True
+    )
+
+    # Relationships
+    created_by: Mapped[Optional["CustomUser"]] = relationship("CustomUser")

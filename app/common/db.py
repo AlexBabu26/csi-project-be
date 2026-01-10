@@ -46,6 +46,7 @@ def get_async_engine():
     doesn't persist across function invocations.
     """
     settings = get_settings()
+    print("CONNECTED TO DATABASE:", settings.database_url)
     return create_async_engine(
         settings.database_url,
         echo=settings.debug,

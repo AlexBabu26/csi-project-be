@@ -27,6 +27,9 @@ from app.kalamela.models import (
     PaymentStatus,
     AppealStatus,
     KalamelaRules,
+    EventSchedule,
+    ScheduleStatus,
+    EventType,
 )
 from app.kalamela import schemas as kala_schema
 from app.common.storage import save_upload_file
@@ -2011,3 +2014,69 @@ async def remove_exclusion(
     await db.commit()
     
     return True
+
+
+async def validate_event_exists(
+    db: AsyncSession,
+    event_id: int,
+    event_type: EventType
+) -> bool:
+    """Validate that event_id exists in the appropriate table."""
+    if event_type == EventType.INDIVIDUAL:
+        stmt = select(IndividualEvent).where(IndividualEvent.id == event_id)
+    else:
+        stmt = select(GroupEvent).where(GroupEvent.id == event_id)
+    
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
+async def get_event_name(
+    db: AsyncSession,
+    event_id: int,
+    event_type: EventType
+) -> Optional[str]:
+    """Get event name by ID and type."""
+    if event_type == EventType.INDIVIDUAL:
+        stmt = select(IndividualEvent.name).where(IndividualEvent.id == event_id)
+    else:
+        stmt = select(GroupEvent.name).where(GroupEvent.id == event_id)
+    
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def check_schedule_conflict(
+    db: AsyncSession,
+    stage_name: str,
+    start_time: datetime,
+    end_time: datetime,
+    exclude_schedule_id: Optional[int] = None
+) -> bool:
+    """Check if there's a schedule conflict for the same stage."""
+    stmt = select(EventSchedule).where(
+        and_(
+            EventSchedule.stage_name == stage_name,
+            EventSchedule.status != ScheduleStatus.CANCELLED,
+            or_(
+                and_(
+                    EventSchedule.start_time <= start_time,
+                    EventSchedule.end_time > start_time
+                ),
+                and_(
+                    EventSchedule.start_time < end_time,
+                    EventSchedule.end_time >= end_time
+                ),
+                and_(
+                    EventSchedule.start_time >= start_time,
+                    EventSchedule.end_time <= end_time
+                )
+            )
+        )
+    )
+    
+    if exclude_schedule_id:
+        stmt = stmt.where(EventSchedule.id != exclude_schedule_id)
+    
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none() is not None

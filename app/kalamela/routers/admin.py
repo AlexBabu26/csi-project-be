@@ -2,14 +2,16 @@
 
 from typing import List, Optional
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user
+from app.common.storage import save_upload_file
+from app.admin.routers.site import get_public_file_url
 from app.auth.models import CustomUser, UnitMembers, UnitName, ClergyDistrict, UserType
 from app.kalamela.models import (
     IndividualEvent,
@@ -26,6 +28,10 @@ from app.kalamela.models import (
     EventCategory,
     RegistrationFee,
     KalamelaRules,
+    PaymentQrCode,
+    EventSchedule,
+    ScheduleStatus,
+    EventType,
 )
 from app.kalamela.schemas import (
     IndividualEventCreate,
@@ -56,6 +62,12 @@ from app.kalamela.schemas import (
     KalamelaRuleCreate,
     KalamelaRuleUpdate,
     KalamelaRuleResponse,
+    PaymentQrCodeResponse,
+    RegistrationFeeQrUpdate,
+    EventScheduleCreate,
+    EventScheduleUpdate,
+    EventScheduleResponse,
+    ScheduleStatus as ScheduleStatusSchema,
 )
 from app.kalamela import service as kalamela_service
 
@@ -72,6 +84,97 @@ async def get_admin_user(
             detail="Access denied. Admin privileges required."
         )
     return current_user
+
+
+# =============================================================================
+# Payment QR Code Management
+# =============================================================================
+
+
+@router.post(
+    "/payment-qr-codes",
+    response_model=PaymentQrCodeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_payment_qr_code(
+    label: str = Form(..., description="Human-readable label for this QR code"),
+    file: UploadFile = File(..., description="QR code image file"),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Upload a reusable payment QR code image that can be linked from multiple entities.
+    """
+    # Save file to B2 storage
+    _, object_key = save_upload_file(file, subdir="payment/qr-codes")
+
+    qr = PaymentQrCode(
+        label=label,
+        object_key=object_key,
+        is_active=True,
+    )
+    db.add(qr)
+    await db.commit()
+    await db.refresh(qr)
+
+    return PaymentQrCodeResponse(
+        id=qr.id,
+        label=qr.label,
+        qr_code_url=get_public_file_url(qr.object_key),
+        is_active=qr.is_active,
+        created_on=qr.created_on,
+        updated_on=qr.updated_on,
+    )
+
+
+@router.get("/payment-qr-codes", response_model=List[PaymentQrCodeResponse])
+async def list_payment_qr_codes(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all reusable payment QR codes."""
+    stmt = select(PaymentQrCode).order_by(PaymentQrCode.created_on.desc())
+    result = await db.execute(stmt)
+    qrs = list(result.scalars().all())
+
+    return [
+        PaymentQrCodeResponse(
+            id=qr.id,
+            label=qr.label,
+            qr_code_url=get_public_file_url(qr.object_key),
+            is_active=qr.is_active,
+            created_on=qr.created_on,
+            updated_on=qr.updated_on,
+        )
+        for qr in qrs
+    ]
+
+
+@router.get("/payment-qr-codes/{qr_id}", response_model=PaymentQrCodeResponse)
+async def get_payment_qr_code(
+    qr_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a single payment QR code by ID."""
+    stmt = select(PaymentQrCode).where(PaymentQrCode.id == qr_id)
+    result = await db.execute(stmt)
+    qr = result.scalar_one_or_none()
+
+    if not qr:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="QR code not found",
+        )
+
+    return PaymentQrCodeResponse(
+        id=qr.id,
+        label=qr.label,
+        qr_code_url=get_public_file_url(qr.object_key),
+        is_active=qr.is_active,
+        created_on=qr.created_on,
+        updated_on=qr.updated_on,
+    )
 
 
 # =============================================================================
@@ -219,9 +322,36 @@ async def list_registration_fees(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all registration fees."""
-    stmt = select(RegistrationFee).order_by(RegistrationFee.name)
+    stmt = (
+        select(RegistrationFee)
+        .options(selectinload(RegistrationFee.qr_code))
+        .order_by(RegistrationFee.name)
+    )
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    fees = list(result.scalars().all())
+
+    responses: List[RegistrationFeeResponse] = []
+    for fee in fees:
+        qr_url: Optional[str] = None
+        if fee.qr_code:
+            qr_url = get_public_file_url(fee.qr_code.object_key)
+
+        responses.append(
+            RegistrationFeeResponse(
+                id=fee.id,
+                name=fee.name,
+                event_type=fee.event_type,
+                amount=fee.amount,
+                created_by_id=fee.created_by_id,
+                updated_by_id=fee.updated_by_id,
+                created_on=fee.created_on,
+                updated_on=fee.updated_on,
+                qr_code_id=fee.qr_code_id,
+                qr_code_url=qr_url,
+            )
+        )
+
+    return responses
 
 
 @router.post("/registration-fees", response_model=RegistrationFeeResponse, status_code=status.HTTP_201_CREATED)
@@ -239,19 +369,48 @@ async def create_registration_fee(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Registration fee with this name already exists"
         )
-    
+
+    # Validate qr_code_id if provided
+    qr_obj: Optional[PaymentQrCode] = None
+    if data.qr_code_id is not None:
+        qr_stmt = select(PaymentQrCode).where(
+            PaymentQrCode.id == data.qr_code_id,
+            PaymentQrCode.is_active == True,  # noqa: E712
+        )
+        qr_result = await db.execute(qr_stmt)
+        qr_obj = qr_result.scalar_one_or_none()
+        if not qr_obj:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or inactive qr_code_id",
+            )
+
     fee = RegistrationFee(
         name=data.name,
         event_type=data.event_type,
         amount=data.amount,
         created_by_id=current_user.id,
         updated_by_id=current_user.id,
+        qr_code_id=data.qr_code_id,
     )
     db.add(fee)
     await db.commit()
     await db.refresh(fee)
-    
-    return fee
+
+    qr_url = get_public_file_url(qr_obj.object_key) if qr_obj else None
+
+    return RegistrationFeeResponse(
+        id=fee.id,
+        name=fee.name,
+        event_type=fee.event_type,
+        amount=fee.amount,
+        created_by_id=fee.created_by_id,
+        updated_by_id=fee.updated_by_id,
+        created_on=fee.created_on,
+        updated_on=fee.updated_on,
+        qr_code_id=fee.qr_code_id,
+        qr_code_url=qr_url,
+    )
 
 
 @router.get("/registration-fees/{fee_id}", response_model=RegistrationFeeResponse)
@@ -261,7 +420,11 @@ async def get_registration_fee(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Get a specific registration fee by ID."""
-    stmt = select(RegistrationFee).where(RegistrationFee.id == fee_id)
+    stmt = (
+        select(RegistrationFee)
+        .options(selectinload(RegistrationFee.qr_code))
+        .where(RegistrationFee.id == fee_id)
+    )
     result = await db.execute(stmt)
     fee = result.scalar_one_or_none()
     
@@ -270,8 +433,23 @@ async def get_registration_fee(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Registration fee not found"
         )
-    
-    return fee
+
+    qr_url: Optional[str] = None
+    if fee.qr_code:
+        qr_url = get_public_file_url(fee.qr_code.object_key)
+
+    return RegistrationFeeResponse(
+        id=fee.id,
+        name=fee.name,
+        event_type=fee.event_type,
+        amount=fee.amount,
+        created_by_id=fee.created_by_id,
+        updated_by_id=fee.updated_by_id,
+        created_on=fee.created_on,
+        updated_on=fee.updated_on,
+        qr_code_id=fee.qr_code_id,
+        qr_code_url=qr_url,
+    )
 
 
 @router.put("/registration-fees/{fee_id}", response_model=RegistrationFeeResponse)
@@ -282,7 +460,11 @@ async def update_registration_fee(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update a registration fee."""
-    stmt = select(RegistrationFee).where(RegistrationFee.id == fee_id)
+    stmt = (
+        select(RegistrationFee)
+        .options(selectinload(RegistrationFee.qr_code))
+        .where(RegistrationFee.id == fee_id)
+    )
     result = await db.execute(stmt)
     fee = result.scalar_one_or_none()
     
@@ -311,13 +493,43 @@ async def update_registration_fee(
     
     if data.amount is not None:
         fee.amount = data.amount
-    
+
+    # Update QR link if provided (None leaves as-is)
+    if data.qr_code_id is not None:
+        qr_stmt = select(PaymentQrCode).where(
+            PaymentQrCode.id == data.qr_code_id,
+            PaymentQrCode.is_active == True,  # noqa: E712
+        )
+        qr_result = await db.execute(qr_stmt)
+        qr_obj = qr_result.scalar_one_or_none()
+        if not qr_obj:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or inactive qr_code_id",
+            )
+        fee.qr_code_id = data.qr_code_id
+
     fee.updated_by_id = current_user.id
     
     await db.commit()
     await db.refresh(fee)
-    
-    return fee
+
+    qr_url: Optional[str] = None
+    if fee.qr_code:
+        qr_url = get_public_file_url(fee.qr_code.object_key)
+
+    return RegistrationFeeResponse(
+        id=fee.id,
+        name=fee.name,
+        event_type=fee.event_type,
+        amount=fee.amount,
+        created_by_id=fee.created_by_id,
+        updated_by_id=fee.updated_by_id,
+        created_on=fee.created_on,
+        updated_on=fee.updated_on,
+        qr_code_id=fee.qr_code_id,
+        qr_code_url=qr_url,
+    )
 
 
 @router.delete("/registration-fees/{fee_id}", response_model=dict)
@@ -359,6 +571,65 @@ async def delete_registration_fee(
     await db.commit()
     
     return {"message": "Registration fee deleted successfully"}
+
+
+@router.put("/registration-fees/{fee_id}/qr-code", response_model=RegistrationFeeResponse)
+async def set_registration_fee_qr_code(
+    fee_id: int,
+    payload: RegistrationFeeQrUpdate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Attach or detach a reusable payment QR code to a registration fee."""
+    stmt = (
+        select(RegistrationFee)
+        .options(selectinload(RegistrationFee.qr_code))
+        .where(RegistrationFee.id == fee_id)
+    )
+    result = await db.execute(stmt)
+    fee = result.scalar_one_or_none()
+
+    if not fee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registration fee not found",
+        )
+
+    qr_obj: Optional[PaymentQrCode] = None
+    if payload.qr_code_id is not None:
+        qr_stmt = select(PaymentQrCode).where(
+            PaymentQrCode.id == payload.qr_code_id,
+            PaymentQrCode.is_active == True,  # noqa: E712
+        )
+        qr_result = await db.execute(qr_stmt)
+        qr_obj = qr_result.scalar_one_or_none()
+        if not qr_obj:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or inactive qr_code_id",
+            )
+        fee.qr_code_id = payload.qr_code_id
+    else:
+        fee.qr_code_id = None
+
+    fee.updated_by_id = current_user.id
+    await db.commit()
+    await db.refresh(fee)
+
+    qr_url = get_public_file_url(qr_obj.object_key) if qr_obj else None
+
+    return RegistrationFeeResponse(
+        id=fee.id,
+        name=fee.name,
+        event_type=fee.event_type,
+        amount=fee.amount,
+        created_by_id=fee.created_by_id,
+        updated_by_id=fee.updated_by_id,
+        created_on=fee.created_on,
+        updated_on=fee.updated_on,
+        qr_code_id=fee.qr_code_id,
+        qr_code_url=qr_url,
+    )
 
 
 # Dashboard
@@ -1872,6 +2143,425 @@ async def export_results(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=kalamela_results.xlsx"}
     )
+
+
+# =============================================================================
+# Event Schedule Management
+# =============================================================================
+
+@router.post("/schedules", response_model=EventScheduleResponse, status_code=status.HTTP_201_CREATED)
+async def create_schedule(
+    data: EventScheduleCreate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a new event schedule."""
+    # Validate event exists
+    event_exists = await kalamela_service.validate_event_exists(db, data.event_id, data.event_type)
+    if not event_exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{data.event_type.value.capitalize()} event with ID {data.event_id} not found"
+        )
+    
+    # Check for schedule conflicts
+    has_conflict = await kalamela_service.check_schedule_conflict(
+        db, data.stage_name, data.start_time, data.end_time
+    )
+    if has_conflict:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schedule conflict: Another event is already scheduled at {data.stage_name} during this time"
+        )
+    
+    # Get event name for response
+    event_name = await kalamela_service.get_event_name(db, data.event_id, data.event_type)
+    
+    # Create schedule
+    schedule = EventSchedule(
+        event_id=data.event_id,
+        event_type=data.event_type,
+        stage_name=data.stage_name,
+        start_time=data.start_time,
+        end_time=data.end_time,
+        status=data.status,
+        created_by_id=current_user.id,
+    )
+    db.add(schedule)
+    await db.commit()
+    await db.refresh(schedule)
+    
+    return EventScheduleResponse(
+        id=schedule.id,
+        event_id=schedule.event_id,
+        event_type=schedule.event_type,
+        stage_name=schedule.stage_name,
+        start_time=schedule.start_time,
+        end_time=schedule.end_time,
+        status=schedule.status,
+        created_on=schedule.created_on,
+        updated_on=schedule.updated_on,
+        created_by_id=schedule.created_by_id,
+        event_name=event_name,
+    )
+
+
+@router.get("/schedules", response_model=List[EventScheduleResponse])
+async def list_schedules(
+    event_id: Optional[int] = None,
+    event_type: Optional[EventType] = None,
+    stage_name: Optional[str] = None,
+    status: Optional[ScheduleStatus] = None,
+    filter_date: Optional[date] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    List all event schedules with optional filters.
+    
+    Query Parameters:
+    - event_id: Filter by event ID
+    - event_type: Filter by event type (individual/group)
+    - stage_name: Filter by stage name
+    - status: Filter by schedule status
+    - filter_date: Filter by specific date (YYYY-MM-DD)
+    - start_date: Filter schedules starting from this date
+    - end_date: Filter schedules ending before this date
+    """
+    stmt = select(EventSchedule)
+    
+    if event_id is not None:
+        stmt = stmt.where(EventSchedule.event_id == event_id)
+    
+    if event_type is not None:
+        stmt = stmt.where(EventSchedule.event_type == event_type)
+    
+    if stage_name is not None:
+        stmt = stmt.where(EventSchedule.stage_name.ilike(f"%{stage_name}%"))
+    
+    if status is not None:
+        stmt = stmt.where(EventSchedule.status == status)
+    
+    if filter_date is not None:
+        # Filter schedules that occur on this date
+        stmt = stmt.where(
+            and_(
+                func.date(EventSchedule.start_time) <= filter_date,
+                func.date(EventSchedule.end_time) >= filter_date
+            )
+        )
+    
+    if start_date is not None:
+        stmt = stmt.where(func.date(EventSchedule.start_time) >= start_date)
+    
+    if end_date is not None:
+        stmt = stmt.where(func.date(EventSchedule.end_time) <= end_date)
+    
+    stmt = stmt.order_by(EventSchedule.start_time)
+    result = await db.execute(stmt)
+    schedules = list(result.scalars().all())
+    
+    # Enrich with event names
+    responses = []
+    for schedule in schedules:
+        event_name = await kalamela_service.get_event_name(db, schedule.event_id, schedule.event_type)
+        responses.append(
+            EventScheduleResponse(
+                id=schedule.id,
+                event_id=schedule.event_id,
+                event_type=schedule.event_type,
+                stage_name=schedule.stage_name,
+                start_time=schedule.start_time,
+                end_time=schedule.end_time,
+                status=schedule.status,
+                created_on=schedule.created_on,
+                updated_on=schedule.updated_on,
+                created_by_id=schedule.created_by_id,
+                event_name=event_name,
+            )
+        )
+    
+    return responses
+
+
+@router.get("/schedules/{schedule_id}", response_model=EventScheduleResponse)
+async def get_schedule(
+    schedule_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get a specific schedule by ID."""
+    stmt = select(EventSchedule).where(EventSchedule.id == schedule_id)
+    result = await db.execute(stmt)
+    schedule = result.scalar_one_or_none()
+    
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule not found"
+        )
+    
+    event_name = await kalamela_service.get_event_name(db, schedule.event_id, schedule.event_type)
+    
+    return EventScheduleResponse(
+        id=schedule.id,
+        event_id=schedule.event_id,
+        event_type=schedule.event_type,
+        stage_name=schedule.stage_name,
+        start_time=schedule.start_time,
+        end_time=schedule.end_time,
+        status=schedule.status,
+        created_on=schedule.created_on,
+        updated_on=schedule.updated_on,
+        created_by_id=schedule.created_by_id,
+        event_name=event_name,
+    )
+
+
+@router.put("/schedules/{schedule_id}", response_model=EventScheduleResponse)
+async def update_schedule(
+    schedule_id: int,
+    data: EventScheduleUpdate,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update an event schedule."""
+    stmt = select(EventSchedule).where(EventSchedule.id == schedule_id)
+    result = await db.execute(stmt)
+    schedule = result.scalar_one_or_none()
+    
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule not found"
+        )
+    
+    # Validate event exists if event_id or event_type is being updated
+    if data.event_id is not None or data.event_type is not None:
+        event_id = data.event_id if data.event_id is not None else schedule.event_id
+        event_type = data.event_type if data.event_type is not None else schedule.event_type
+        
+        event_exists = await kalamela_service.validate_event_exists(db, event_id, event_type)
+        if not event_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"{event_type.value.capitalize()} event with ID {event_id} not found"
+            )
+    
+    # Check for conflicts if stage/time is being updated
+    stage_name = data.stage_name if data.stage_name is not None else schedule.stage_name
+    start_time = data.start_time if data.start_time is not None else schedule.start_time
+    end_time = data.end_time if data.end_time is not None else schedule.end_time
+    
+    if data.stage_name is not None or data.start_time is not None or data.end_time is not None:
+        has_conflict = await kalamela_service.check_schedule_conflict(
+            db, stage_name, start_time, end_time, exclude_schedule_id=schedule_id
+        )
+        if has_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Schedule conflict: Another event is already scheduled at {stage_name} during this time"
+            )
+    
+    # Update fields
+    if data.event_id is not None:
+        schedule.event_id = data.event_id
+    if data.event_type is not None:
+        schedule.event_type = data.event_type
+    if data.stage_name is not None:
+        schedule.stage_name = data.stage_name
+    if data.start_time is not None:
+        schedule.start_time = data.start_time
+    if data.end_time is not None:
+        schedule.end_time = data.end_time
+    if data.status is not None:
+        schedule.status = data.status
+    
+    await db.commit()
+    await db.refresh(schedule)
+    
+    event_name = await kalamela_service.get_event_name(db, schedule.event_id, schedule.event_type)
+    
+    return EventScheduleResponse(
+        id=schedule.id,
+        event_id=schedule.event_id,
+        event_type=schedule.event_type,
+        stage_name=schedule.stage_name,
+        start_time=schedule.start_time,
+        end_time=schedule.end_time,
+        status=schedule.status,
+        created_on=schedule.created_on,
+        updated_on=schedule.updated_on,
+        created_by_id=schedule.created_by_id,
+        event_name=event_name,
+    )
+
+
+@router.delete("/schedules/{schedule_id}", response_model=dict)
+async def delete_schedule(
+    schedule_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Delete an event schedule."""
+    stmt = select(EventSchedule).where(EventSchedule.id == schedule_id)
+    result = await db.execute(stmt)
+    schedule = result.scalar_one_or_none()
+    
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule not found"
+        )
+    
+    await db.delete(schedule)
+    await db.commit()
+    
+    return {"message": "Schedule deleted successfully"}
+
+
+@router.get("/events/{event_type}/{event_id}/schedules", response_model=List[EventScheduleResponse])
+async def get_event_schedules(
+    event_type: EventType,
+    event_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get all schedules for a specific event."""
+    # Validate event exists
+    event_exists = await kalamela_service.validate_event_exists(db, event_id, event_type)
+    if not event_exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{event_type.value.capitalize()} event with ID {event_id} not found"
+        )
+    
+    stmt = select(EventSchedule).where(
+        and_(
+            EventSchedule.event_id == event_id,
+            EventSchedule.event_type == event_type
+        )
+    ).order_by(EventSchedule.start_time)
+    
+    result = await db.execute(stmt)
+    schedules = list(result.scalars().all())
+    
+    event_name = await kalamela_service.get_event_name(db, event_id, event_type)
+    
+    return [
+        EventScheduleResponse(
+            id=s.id,
+            event_id=s.event_id,
+            event_type=s.event_type,
+            stage_name=s.stage_name,
+            start_time=s.start_time,
+            end_time=s.end_time,
+            status=s.status,
+            created_on=s.created_on,
+            updated_on=s.updated_on,
+            created_by_id=s.created_by_id,
+            event_name=event_name,
+        )
+        for s in schedules
+    ]
+
+
+@router.get("/events/with-schedules", response_model=dict)
+async def get_events_with_schedules(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get all events (individual and group) with their schedules."""
+    # Get all individual events
+    stmt_ind = select(IndividualEvent).options(
+        selectinload(IndividualEvent.event_category),
+        selectinload(IndividualEvent.registration_fee)
+    ).order_by(IndividualEvent.name)
+    result_ind = await db.execute(stmt_ind)
+    individual_events = list(result_ind.scalars().all())
+    
+    # Get all group events
+    stmt_grp = select(GroupEvent).options(
+        selectinload(GroupEvent.registration_fee),
+        selectinload(GroupEvent.event_category)
+    ).order_by(GroupEvent.name)
+    result_grp = await db.execute(stmt_grp)
+    group_events = list(result_grp.scalars().all())
+    
+    # Get all schedules
+    stmt_schedules = select(EventSchedule).order_by(EventSchedule.start_time)
+    result_schedules = await db.execute(stmt_schedules)
+    all_schedules = list(result_schedules.scalars().all())
+    
+    # Group schedules by event
+    schedules_by_event = {}
+    for schedule in all_schedules:
+        key = (schedule.event_id, schedule.event_type)
+        if key not in schedules_by_event:
+            schedules_by_event[key] = []
+        event_name = await kalamela_service.get_event_name(db, schedule.event_id, schedule.event_type)
+        schedules_by_event[key].append(
+            EventScheduleResponse(
+                id=schedule.id,
+                event_id=schedule.event_id,
+                event_type=schedule.event_type,
+                stage_name=schedule.stage_name,
+                start_time=schedule.start_time,
+                end_time=schedule.end_time,
+                status=schedule.status,
+                created_on=schedule.created_on,
+                updated_on=schedule.updated_on,
+                created_by_id=schedule.created_by_id,
+                event_name=event_name,
+            )
+        )
+    
+    # Build response with events and their schedules
+    individual_events_list = []
+    for event in individual_events:
+        schedules = schedules_by_event.get((event.id, EventType.INDIVIDUAL), [])
+        individual_events_list.append({
+            "id": event.id,
+            "name": event.name,
+            "category_id": event.category_id,
+            "category_name": event.event_category.name if event.event_category else None,
+            "registration_fee_id": event.registration_fee_id,
+            "registration_fee_amount": event.registration_fee.amount if event.registration_fee else None,
+            "description": event.description,
+            "is_mandatory": event.is_mandatory,
+            "is_active": event.is_active,
+            "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+            "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
+            "schedules": [s.model_dump() for s in schedules],
+        })
+    
+    group_events_list = []
+    for event in group_events:
+        schedules = schedules_by_event.get((event.id, EventType.GROUP), [])
+        group_events_list.append({
+            "id": event.id,
+            "name": event.name,
+            "description": event.description,
+            "category_id": event.category_id,
+            "category_name": event.event_category.name if event.event_category else None,
+            "registration_fee_id": event.registration_fee_id,
+            "registration_fee_amount": event.registration_fee.amount if event.registration_fee else None,
+            "min_allowed_limit": event.min_allowed_limit,
+            "max_allowed_limit": event.max_allowed_limit,
+            "per_unit_allowed_limit": event.per_unit_allowed_limit,
+            "is_mandatory": event.is_mandatory,
+            "is_active": event.is_active,
+            "gender_restriction": event.gender_restriction.value if event.gender_restriction else None,
+            "seniority_restriction": event.seniority_restriction.value if event.seniority_restriction else None,
+            "schedules": [s.model_dump() for s in schedules],
+        })
+    
+    return {
+        "individual_events": individual_events_list,
+        "group_events": group_events_list,
+    }
 
 
 # =============================================================================
