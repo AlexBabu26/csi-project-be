@@ -187,6 +187,7 @@ async def get_top_results(db: AsyncSession = Depends(get_async_db)):
                     "unit_name": score.participant.registered_user.unit_name.name,
                     "district_name": score.participant.registered_user.unit_name.district.name,
                     "chest_number": score.participation.chest_number,
+                    "awarded_mark": score.awarded_mark,
                     "total_points": score.total_points,
                     "grade": score.grade,
                 }
@@ -213,6 +214,7 @@ async def get_top_results(db: AsyncSession = Depends(get_async_db)):
                 {
                     "position": idx + 1,
                     "chest_number": score.chest_number,
+                    "awarded_mark": score.awarded_mark,
                     "total_points": score.total_points,
                     "grade": score.grade,
                 }
