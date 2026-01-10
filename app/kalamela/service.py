@@ -1838,23 +1838,34 @@ async def calculate_kalaprathibha(
     """
     Calculate Kalaprathibha (male) and Kalathilakam (female).
     
-    Criteria: 2+ events with 2+ points each, sum points.
+    Criteria: Finished in top 3 in at least 2 events from 2+ unique event categories, sum points.
     """
     # Kalaprathibha (Male)
     stmt = select(
         UnitMembers.name,
         UnitMembers.id,
-        func.count(IndividualEventScoreCard.id).label('event_count'),
+        func.count(func.distinct(IndividualEvent.category_id)).label('category_count'),
         func.sum(IndividualEventScoreCard.total_points).label('combined_score')
     ).join(
         IndividualEventScoreCard, UnitMembers.id == IndividualEventScoreCard.participant_id
+    ).join(
+        IndividualEventParticipation, 
+        IndividualEventScoreCard.event_participation_id == IndividualEventParticipation.id
+    ).join(
+        IndividualEvent,
+        IndividualEventParticipation.individual_event_id == IndividualEvent.id
     ).where(
         and_(
             UnitMembers.gender == 'M',
-            IndividualEventScoreCard.total_points >= 2
+            IndividualEventScoreCard.rank.isnot(None),
+            IndividualEventScoreCard.rank <= 3,
+            IndividualEvent.category_id.isnot(None)
         )
     ).group_by(UnitMembers.id, UnitMembers.name).having(
-        func.count(IndividualEventScoreCard.id) >= 2
+        and_(
+            func.count(IndividualEventScoreCard.id) >= 2,  # At least 2 events with top 3
+            func.count(func.distinct(IndividualEvent.category_id)) >= 2  # At least 2 unique categories
+        )
     ).order_by(func.sum(IndividualEventScoreCard.total_points).desc())
     
     result = await db.execute(stmt)
@@ -1880,17 +1891,28 @@ async def calculate_kalaprathibha(
     stmt = select(
         UnitMembers.name,
         UnitMembers.id,
-        func.count(IndividualEventScoreCard.id).label('event_count'),
+        func.count(func.distinct(IndividualEvent.category_id)).label('category_count'),
         func.sum(IndividualEventScoreCard.total_points).label('combined_score')
     ).join(
         IndividualEventScoreCard, UnitMembers.id == IndividualEventScoreCard.participant_id
+    ).join(
+        IndividualEventParticipation, 
+        IndividualEventScoreCard.event_participation_id == IndividualEventParticipation.id
+    ).join(
+        IndividualEvent,
+        IndividualEventParticipation.individual_event_id == IndividualEvent.id
     ).where(
         and_(
             UnitMembers.gender == 'F',
-            IndividualEventScoreCard.total_points >= 2
+            IndividualEventScoreCard.rank.isnot(None),
+            IndividualEventScoreCard.rank <= 3,
+            IndividualEvent.category_id.isnot(None)
         )
     ).group_by(UnitMembers.id, UnitMembers.name).having(
-        func.count(IndividualEventScoreCard.id) >= 2
+        and_(
+            func.count(IndividualEventScoreCard.id) >= 2,  # At least 2 events with top 3
+            func.count(func.distinct(IndividualEvent.category_id)) >= 2  # At least 2 unique categories
+        )
     ).order_by(func.sum(IndividualEventScoreCard.total_points).desc())
     
     result = await db.execute(stmt)

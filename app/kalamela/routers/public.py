@@ -231,8 +231,8 @@ async def get_top_results(db: AsyncSession = Depends(get_async_db)):
 async def get_kalaprathibha_kalathilakam(db: AsyncSession = Depends(get_async_db)):
     """
     Calculate and return:
-    - Kalaprathibha (Male): 2+ events with 2+ points each, sum points
-    - Kalathilakam (Female): 2+ events with 2+ points each, sum points
+    - Kalaprathibha (Male): Finished in top 3 in at least 2 events from 2+ unique event categories, sum points
+    - Kalathilakam (Female): Finished in top 3 in at least 2 events from 2+ unique event categories, sum points
     """
     result = await kalamela_service.calculate_kalaprathibha(db)
     
