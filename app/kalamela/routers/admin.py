@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.common.storage import save_upload_file
+from app.common.cache import get_cache, set_cache
 from app.admin.routers.site import get_public_file_url
 from app.auth.models import CustomUser, UnitMembers, UnitName, ClergyDistrict, UserType
 from app.kalamela.models import (
@@ -1984,39 +1985,58 @@ async def reply_to_appeal(
 async def get_unit_wise_results(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """Get top 3 results per unit."""
-    stmt = select(UnitName).order_by(UnitName.name)
+    """Get all results grouped by unit (optimized single query with caching)."""
+    
+    # Check cache first
+    cache_key = "unit_wise_results"
+    if not refresh:
+        cached_data = get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+    
+    # Single query with all joins - fetch everything at once
+    stmt = (
+        select(
+            UnitName.name.label("unit_name"),
+            IndividualEventScoreCard.id,
+            IndividualEventScoreCard.participant_id,
+            IndividualEventScoreCard.awarded_mark,
+            IndividualEventScoreCard.grade,
+            IndividualEventScoreCard.total_points,
+        )
+        .select_from(IndividualEventScoreCard)
+        .join(UnitMembers, IndividualEventScoreCard.participant_id == UnitMembers.id)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .order_by(UnitName.name, IndividualEventScoreCard.total_points.desc())
+    )
+    
     result = await db.execute(stmt)
-    units = list(result.scalars().all())
+    rows = result.all()
     
+    # Group results by unit name
     results_dict = {}
-    
-    for unit in units:
-        # Get top 3 scores for this unit
-        stmt = select(IndividualEventScoreCard).join(
-            UnitMembers, IndividualEventScoreCard.participant_id == UnitMembers.id
-        ).where(
-            UnitMembers.registered_user.has(unit_name_id=unit.id)
-        ).order_by(IndividualEventScoreCard.total_points.desc())
-        result = await db.execute(stmt)
-        scores = list(result.scalars().all())
+    for row in rows:
+        unit_name = row.unit_name
+        if unit_name not in results_dict:
+            results_dict[unit_name] = [{"unit_results": []}]
         
-        if scores:
-            results_dict[unit.name] = [{
-                "unit_results": [
-                    {
-                        "id": s.id,
-                        "participant_id": s.participant_id,
-                        "awarded_mark": s.awarded_mark,
-                        "grade": s.grade,
-                        "total_points": s.total_points,
-                    }
-                    for s in scores
-                ]
-            }]
+        results_dict[unit_name][0]["unit_results"].append({
+            "id": row.id,
+            "participant_id": row.participant_id,
+            "awarded_mark": row.awarded_mark,
+            "grade": row.grade,
+            "total_points": row.total_points,
+        })
     
-    return {"results_dict": results_dict}
+    response = {"results_dict": results_dict}
+    
+    # Cache for 5 minutes
+    set_cache(cache_key, response, ttl_seconds=300)
+    
+    return response
 
 
 @router.get("/results/district-wise", response_model=dict)
