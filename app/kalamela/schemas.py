@@ -264,7 +264,16 @@ class GroupParticipationResponse(BaseModel):
 class IndividualScoreCreate(BaseModel):
     """Create schema for individual score. Only marks needed - grade/points auto-calculated."""
     event_participation_id: int = Field(..., gt=0)
-    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
+    awarded_mark: float = Field(..., ge=0, le=100, description="Marks out of 100 (supports up to 2 decimal places)")
+    
+    @field_validator('awarded_mark')
+    @classmethod
+    def validate_decimal_places(cls, v: float) -> float:
+        """Round awarded_mark to 2 decimal places (database stores Numeric(5,2))."""
+        if v is None:
+            return v
+        # Round to 2 decimal places to match database precision
+        return round(v, 2)
 
 
 class IndividualScoreBulkCreate(BaseModel):
@@ -275,7 +284,16 @@ class IndividualScoreBulkCreate(BaseModel):
 class IndividualScoreUpdate(BaseModel):
     """Update schema for individual score. Only marks needed - grade/points auto-calculated."""
     event_participation_id: int = Field(..., gt=0)
-    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
+    awarded_mark: float = Field(..., ge=0, le=100, description="Marks out of 100 (supports up to 2 decimal places)")
+    
+    @field_validator('awarded_mark')
+    @classmethod
+    def validate_decimal_places(cls, v: float) -> float:
+        """Round awarded_mark to 2 decimal places (database stores Numeric(5,2))."""
+        if v is None:
+            return v
+        # Round to 2 decimal places to match database precision
+        return round(v, 2)
 
 
 class IndividualScoreBulkUpdate(BaseModel):
@@ -290,7 +308,7 @@ class IndividualScoreResponse(BaseModel):
     id: int
     event_participation_id: int
     participant_id: int
-    awarded_mark: int
+    awarded_mark: float
     grade: Optional[str]
     grade_points: int
     rank: Optional[int]
@@ -303,7 +321,16 @@ class GroupScoreCreate(BaseModel):
     """Create schema for group score. Only marks needed - grade/points auto-calculated."""
     event_name: str = Field(..., min_length=1, max_length=255)
     chest_number: str = Field(..., min_length=1, max_length=50)
-    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
+    awarded_mark: float = Field(..., ge=0, le=100, description="Marks out of 100 (supports up to 2 decimal places)")
+    
+    @field_validator('awarded_mark')
+    @classmethod
+    def validate_decimal_places(cls, v: float) -> float:
+        """Round awarded_mark to 2 decimal places (database stores Numeric(5,2))."""
+        if v is None:
+            return v
+        # Round to 2 decimal places to match database precision
+        return round(v, 2)
 
 
 class GroupScoreBulkCreate(BaseModel):
@@ -314,7 +341,16 @@ class GroupScoreBulkCreate(BaseModel):
 class GroupScoreUpdate(BaseModel):
     """Update schema for group score. Only marks needed - grade/points auto-calculated."""
     chest_number: str = Field(..., min_length=1, max_length=50)
-    awarded_mark: int = Field(..., ge=0, le=100, description="Marks out of 100")
+    awarded_mark: float = Field(..., ge=0, le=100, description="Marks out of 100 (supports up to 2 decimal places)")
+    
+    @field_validator('awarded_mark')
+    @classmethod
+    def validate_decimal_places(cls, v: float) -> float:
+        """Round awarded_mark to 2 decimal places (database stores Numeric(5,2))."""
+        if v is None:
+            return v
+        # Round to 2 decimal places to match database precision
+        return round(v, 2)
 
 
 class GroupScoreBulkUpdate(BaseModel):
@@ -329,7 +365,7 @@ class GroupScoreResponse(BaseModel):
     id: int
     event_name: str
     chest_number: str
-    awarded_mark: int
+    awarded_mark: float
     grade: Optional[str]
     grade_points: int
     rank: Optional[int]

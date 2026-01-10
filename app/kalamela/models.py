@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -269,8 +270,8 @@ class IndividualEventScoreCard(Base):
     event_participation_id: Mapped[int] = mapped_column(ForeignKey("individual_event_participation.id"), nullable=False)
     participant_id: Mapped[int] = mapped_column(ForeignKey("unit_members.id"), nullable=False)
     
-    # Input: marks out of 100
-    awarded_mark: Mapped[int] = mapped_column(Integer, default=0)
+    # Input: marks out of 100 (supports decimal values)
+    awarded_mark: Mapped[float] = mapped_column(Numeric(5, 2), default=0.0)
     
     # Auto-calculated fields
     grade: Mapped[Optional[str]] = mapped_column(String(1))  # A, B, C, or null
@@ -292,8 +293,8 @@ class GroupEventScoreCard(Base):
     event_name: Mapped[str] = mapped_column(String(255), nullable=False)
     chest_number: Mapped[str] = mapped_column(String(50), nullable=False)
     
-    # Input: marks out of 100
-    awarded_mark: Mapped[int] = mapped_column(Integer, default=0)
+    # Input: marks out of 100 (supports decimal values)
+    awarded_mark: Mapped[float] = mapped_column(Numeric(5, 2), default=0.0)
     
     # Auto-calculated fields (Group events: rank points only, no grade points for championship)
     grade: Mapped[Optional[str]] = mapped_column(String(1))  # A, B, C, or null (for display)

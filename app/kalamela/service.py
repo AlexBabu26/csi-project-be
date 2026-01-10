@@ -192,7 +192,7 @@ SENIOR_DOB_END = date(2005, 1, 10)
 # Scoring System - Auto-calculation helpers
 # =============================================================================
 
-def calculate_grade(awarded_mark: int) -> tuple:
+def calculate_grade(awarded_mark: float) -> tuple:
     """
     Calculate grade and grade points from marks (out of 100).
     
@@ -201,6 +201,9 @@ def calculate_grade(awarded_mark: int) -> tuple:
     - B Grade: 50% to 59% → 3 points
     - C Grade: 40% to 49% → 1 point
     - Below 40%: No grade → 0 points
+    
+    Args:
+        awarded_mark: Marks out of 100 (supports decimal values)
     
     Returns: (grade: str|None, grade_points: int)
     """
