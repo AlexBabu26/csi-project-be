@@ -1593,123 +1593,190 @@ async def add_group_scores(
 async def view_individual_scores(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """View all individual scores grouped by event."""
-    # Get all distinct events that have scores
-    stmt = select(func.distinct(IndividualEvent.name)).join(
-        IndividualEventParticipation,
-        IndividualEvent.id == IndividualEventParticipation.individual_event_id
-    ).join(
-        IndividualEventScoreCard,
-        IndividualEventParticipation.id == IndividualEventScoreCard.event_participation_id
-    )
-    result = await db.execute(stmt)
-    event_names = [row[0] for row in result.all()]
+    """View all individual scores grouped by event (optimized single query with caching)."""
     
-    results_dict = {}
+    # Check cache first
+    cache_key = "individual_scores_all"
+    if not refresh:
+        cached_data = get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
     
-    for event_name in event_names:
-        stmt = select(IndividualEventScoreCard).join(
+    # Single query with all necessary joins - fetch everything at once
+    stmt = (
+        select(
+            IndividualEvent.name.label("event_name"),
+            IndividualEventScoreCard.id,
+            IndividualEventScoreCard.event_participation_id,
+            IndividualEventScoreCard.participant_id,
+            IndividualEventScoreCard.awarded_mark,
+            IndividualEventScoreCard.grade,
+            IndividualEventScoreCard.grade_points,
+            IndividualEventScoreCard.rank,
+            IndividualEventScoreCard.rank_points,
+            IndividualEventScoreCard.total_points,
+            IndividualEventScoreCard.added_on,
+            IndividualEventParticipation.chest_number,
+            UnitMembers.name.label("participant_name"),
+            UnitName.name.label("unit_name"),
+            ClergyDistrict.name.label("district_name"),
+        )
+        .select_from(IndividualEventScoreCard)
+        .join(
             IndividualEventParticipation,
             IndividualEventScoreCard.event_participation_id == IndividualEventParticipation.id
-        ).join(
+        )
+        .join(
             IndividualEvent,
             IndividualEventParticipation.individual_event_id == IndividualEvent.id
-        ).where(IndividualEvent.name == event_name).options(
-            selectinload(IndividualEventScoreCard.participation),
-            selectinload(IndividualEventScoreCard.participant).selectinload(
-                UnitMembers.registered_user
-            ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
-        ).order_by(IndividualEventScoreCard.total_points.desc())
-        result = await db.execute(stmt)
-        scores = list(result.scalars().all())
-        
-        if scores:
-            results_dict[event_name] = [
-                {
-                    "id": s.id,
-                    "event_name": event_name,
-                    "event_participation_id": s.event_participation_id,
-                    "participant_id": s.participant_id,
-                    "participant_name": s.participant.name if s.participant else None,
-                    "chest_number": s.participation.chest_number if s.participation else None,
-                    "unit_name": s.participant.registered_user.unit_name.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name else None,
-                    "district_name": s.participant.registered_user.unit_name.district.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name and s.participant.registered_user.unit_name.district else None,
-                    "awarded_mark": s.awarded_mark,
-                    "grade": s.grade,
-                    "grade_points": getattr(s, 'grade_points', 0),
-                    "rank": getattr(s, 'rank', None),
-                    "rank_points": getattr(s, 'rank_points', 0),
-                    "total_points": s.total_points,
-                    "added_on": s.added_on.isoformat() if s.added_on else None,
-                }
-                for s in scores
-            ]
+        )
+        .join(
+            UnitMembers,
+            IndividualEventScoreCard.participant_id == UnitMembers.id
+        )
+        .join(
+            CustomUser,
+            UnitMembers.registered_user_id == CustomUser.id
+        )
+        .outerjoin(
+            UnitName,
+            CustomUser.unit_name_id == UnitName.id
+        )
+        .outerjoin(
+            ClergyDistrict,
+            UnitName.clergy_district_id == ClergyDistrict.id
+        )
+        .order_by(IndividualEvent.name, IndividualEventScoreCard.total_points.desc())
+    )
     
-    return {"results_dict": results_dict}
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    # Group results by event name
+    results_dict = {}
+    for row in rows:
+        event_name = row.event_name
+        if event_name not in results_dict:
+            results_dict[event_name] = []
+        
+        results_dict[event_name].append({
+            "id": row.id,
+            "event_name": event_name,
+            "event_participation_id": row.event_participation_id,
+            "participant_id": row.participant_id,
+            "participant_name": row.participant_name,
+            "chest_number": row.chest_number,
+            "unit_name": row.unit_name,
+            "district_name": row.district_name,
+            "awarded_mark": row.awarded_mark,
+            "grade": row.grade,
+            "grade_points": row.grade_points or 0,
+            "rank": row.rank,
+            "rank_points": row.rank_points or 0,
+            "total_points": row.total_points,
+            "added_on": row.added_on.isoformat() if row.added_on else None,
+        })
+    
+    response = {"results_dict": results_dict}
+    
+    # Cache for 5 minutes
+    set_cache(cache_key, response, ttl_seconds=300)
+    
+    return response
 
 
 @router.get("/scores/group", response_model=dict)
 async def view_group_scores(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """View all group scores grouped by event."""
-    # Get all distinct events
-    stmt = select(func.distinct(GroupEventScoreCard.event_name))
-    result = await db.execute(stmt)
-    event_names = [row[0] for row in result.all()]
+    """View all group scores grouped by event (optimized with caching)."""
     
-    results_dict = {}
+    # Check cache first
+    cache_key = "group_scores_all"
+    if not refresh:
+        cached_data = get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
     
-    for event_name in event_names:
-        stmt = select(GroupEventScoreCard).where(
-            GroupEventScoreCard.event_name == event_name
-        ).order_by(GroupEventScoreCard.total_points.desc())
-        result = await db.execute(stmt)
-        scores = list(result.scalars().all())
+    # Step 1: Get all group scores in one query
+    scores_stmt = (
+        select(GroupEventScoreCard)
+        .order_by(GroupEventScoreCard.event_name, GroupEventScoreCard.total_points.desc())
+    )
+    scores_result = await db.execute(scores_stmt)
+    all_scores = list(scores_result.scalars().all())
+    
+    if not all_scores:
+        response = {"results_dict": {}}
+        set_cache(cache_key, response, ttl_seconds=300)
+        return response
+    
+    # Step 2: Get all unique chest numbers from scores
+    chest_numbers = list(set(s.chest_number for s in all_scores if s.chest_number))
+    
+    # Step 3: Single query to get unit/district info for all chest numbers
+    if chest_numbers:
+        chest_info_stmt = (
+            select(
+                GroupEventParticipation.chest_number,
+                UnitName.name.label("unit_name"),
+                ClergyDistrict.name.label("district_name"),
+            )
+            .select_from(GroupEventParticipation)
+            .join(UnitMembers, GroupEventParticipation.participant_id == UnitMembers.id)
+            .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+            .outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
+            .outerjoin(ClergyDistrict, UnitName.clergy_district_id == ClergyDistrict.id)
+            .where(GroupEventParticipation.chest_number.in_(chest_numbers))
+            .distinct(GroupEventParticipation.chest_number)
+        )
+        chest_result = await db.execute(chest_info_stmt)
         
-        if scores:
-            # Get unit and district info from first participation with each chest number
-            results_list = []
-            for s in scores:
-                # Query for participation to get unit/district info
-                part_stmt = select(GroupEventParticipation).where(
-                    GroupEventParticipation.chest_number == s.chest_number
-                ).options(
-                    selectinload(GroupEventParticipation.participant).selectinload(
-                        UnitMembers.registered_user
-                    ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
-                ).limit(1)
-                part_result = await db.execute(part_stmt)
-                participation = part_result.scalar_one_or_none()
-                
-                unit_name = None
-                district_name = None
-                if participation and participation.participant:
-                    if participation.participant.registered_user and participation.participant.registered_user.unit_name:
-                        unit_name = participation.participant.registered_user.unit_name.name
-                        if participation.participant.registered_user.unit_name.district:
-                            district_name = participation.participant.registered_user.unit_name.district.name
-                
-                results_list.append({
-                    "id": s.id,
-                    "event_name": s.event_name,
-                    "chest_number": s.chest_number,
-                    "unit_name": unit_name,
-                    "district_name": district_name,
-                    "awarded_mark": s.awarded_mark,
-                    "grade": s.grade,
-                    "grade_points": getattr(s, 'grade_points', 0),
-                    "rank": getattr(s, 'rank', None),
-                    "rank_points": getattr(s, 'rank_points', 0),
-                    "total_points": s.total_points,
-                    "added_on": s.added_on.isoformat() if s.added_on else None,
-                })
-            
-            results_dict[event_name] = results_list
+        # Build lookup dictionary: chest_number -> {unit_name, district_name}
+        chest_info_map = {}
+        for row in chest_result.all():
+            chest_info_map[row.chest_number] = {
+                "unit_name": row.unit_name,
+                "district_name": row.district_name,
+            }
+    else:
+        chest_info_map = {}
     
-    return {"results_dict": results_dict}
+    # Step 4: Build results grouped by event name
+    results_dict = {}
+    for s in all_scores:
+        event_name = s.event_name
+        if event_name not in results_dict:
+            results_dict[event_name] = []
+        
+        # Get unit/district from lookup (O(1) instead of query)
+        info = chest_info_map.get(s.chest_number, {})
+        
+        results_dict[event_name].append({
+            "id": s.id,
+            "event_name": s.event_name,
+            "chest_number": s.chest_number,
+            "unit_name": info.get("unit_name"),
+            "district_name": info.get("district_name"),
+            "awarded_mark": s.awarded_mark,
+            "grade": s.grade,
+            "grade_points": getattr(s, 'grade_points', 0),
+            "rank": getattr(s, 'rank', None),
+            "rank_points": getattr(s, 'rank_points', 0),
+            "total_points": s.total_points,
+            "added_on": s.added_on.isoformat() if s.added_on else None,
+        })
+    
+    response = {"results_dict": results_dict}
+    
+    # Cache for 5 minutes
+    set_cache(cache_key, response, ttl_seconds=300)
+    
+    return response
 
 
 @router.post("/scores/individual/event/{event_id}", response_model=dict)
