@@ -2222,14 +2222,10 @@ async def export_results(
     """Export all results for all events."""
     from app.common.exporter import export_kalamela_results
     
-    # Get all events
+    # Get all individual events
     stmt = select(IndividualEvent)
     result = await db.execute(stmt)
     individual_events = list(result.scalars().all())
-    
-    stmt = select(GroupEvent)
-    result = await db.execute(stmt)
-    group_events = list(result.scalars().all())
     
     # Get all results for each individual event
     individual_results = {}
@@ -2259,24 +2255,26 @@ async def export_results(
                 for idx, score in enumerate(all_scores)
             ]
     
-    # Get all results for each group event
+    # Get ALL group scores directly (not filtered by GroupEvent table)
+    stmt = select(GroupEventScoreCard).order_by(
+        GroupEventScoreCard.event_name,
+        GroupEventScoreCard.total_points.desc()
+    )
+    result = await db.execute(stmt)
+    all_group_scores = list(result.scalars().all())
+    
+    # Group by event_name from the score card itself
     group_results = {}
-    for event in group_events:
-        stmt = select(GroupEventScoreCard).where(
-            GroupEventScoreCard.event_name == event.name
-        ).order_by(GroupEventScoreCard.total_points.desc())
-        result = await db.execute(stmt)
-        all_scores = list(result.scalars().all())
+    for score in all_group_scores:
+        event_name = score.event_name
+        if event_name not in group_results:
+            group_results[event_name] = []
         
-        if all_scores:
-            group_results[event.name] = [
-                {
-                    "position": idx + 1,
-                    "chest_number": score.chest_number,
-                    "total_points": score.total_points,
-                }
-                for idx, score in enumerate(all_scores)
-            ]
+        group_results[event_name].append({
+            "position": len(group_results[event_name]) + 1,
+            "chest_number": score.chest_number,
+            "total_points": score.total_points,
+        })
     
     excel_file = export_kalamela_results(individual_results, group_results)
     
