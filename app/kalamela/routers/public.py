@@ -1,13 +1,13 @@
 """Kalamela public router - public access endpoints."""
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
-from app.auth.models import UnitMembers, UnitName, ClergyDistrict
+from app.auth.models import UnitMembers, UnitName, ClergyDistrict, CustomUser
 from app.kalamela.models import (
     IndividualEvent,
     GroupEvent,
@@ -67,7 +67,7 @@ async def public_home(db: AsyncSession = Depends(get_async_db)):
 
 @router.post("/find-participant", response_model=dict)
 async def find_participant_by_chest_number(
-    chest_number: str,
+    chest_number: str = Query(..., description="Chest number to search for"),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
@@ -76,7 +76,7 @@ async def find_participant_by_chest_number(
     """
     # Search in individual participations
     stmt = select(IndividualEventParticipation).where(
-        IndividualEventParticipation.chest_number == chest_number
+        IndividualEventParticipation.chest_number.like(f"%{chest_number}%")
     ).options(
         selectinload(IndividualEventParticipation.individual_event),
         selectinload(IndividualEventParticipation.participant).selectinload(
@@ -242,8 +242,8 @@ async def get_kalaprathibha_kalathilakam(db: AsyncSession = Depends(get_async_db
 # Appeals
 @router.post("/appeal/check", response_model=dict)
 async def check_appeal_eligibility(
-    chest_number: str,
-    event_name: str,
+    chest_number: str = Query(..., description="Chest number"),
+    event_name: str = Query(..., description="Event name"),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
@@ -386,7 +386,3 @@ async def view_appeal_status(
         }
         for appeal in appeals
     ]
-
-
-# Import fix
-from app.auth.models import CustomUser

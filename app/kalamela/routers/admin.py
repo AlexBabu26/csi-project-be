@@ -1616,7 +1616,9 @@ async def view_individual_scores(
             IndividualEventParticipation.individual_event_id == IndividualEvent.id
         ).where(IndividualEvent.name == event_name).options(
             selectinload(IndividualEventScoreCard.participation),
-            selectinload(IndividualEventScoreCard.participant)
+            selectinload(IndividualEventScoreCard.participant).selectinload(
+                UnitMembers.registered_user
+            ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
         ).order_by(IndividualEventScoreCard.total_points.desc())
         result = await db.execute(stmt)
         scores = list(result.scalars().all())
@@ -1625,8 +1627,13 @@ async def view_individual_scores(
             results_dict[event_name] = [
                 {
                     "id": s.id,
+                    "event_name": event_name,
                     "event_participation_id": s.event_participation_id,
                     "participant_id": s.participant_id,
+                    "participant_name": s.participant.name if s.participant else None,
+                    "chest_number": s.participation.chest_number if s.participation else None,
+                    "unit_name": s.participant.registered_user.unit_name.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name else None,
+                    "district_name": s.participant.registered_user.unit_name.district.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name and s.participant.registered_user.unit_name.district else None,
                     "awarded_mark": s.awarded_mark,
                     "grade": s.grade,
                     "grade_points": getattr(s, 'grade_points', 0),
@@ -1634,8 +1641,6 @@ async def view_individual_scores(
                     "rank_points": getattr(s, 'rank_points', 0),
                     "total_points": s.total_points,
                     "added_on": s.added_on.isoformat() if s.added_on else None,
-                    "chest_number": s.participation.chest_number if s.participation else None,
-                    "participant_name": s.participant.name if s.participant else None,
                 }
                 for s in scores
             ]
@@ -1664,11 +1669,34 @@ async def view_group_scores(
         scores = list(result.scalars().all())
         
         if scores:
-            results_dict[event_name] = [
-                {
+            # Get unit and district info from first participation with each chest number
+            results_list = []
+            for s in scores:
+                # Query for participation to get unit/district info
+                part_stmt = select(GroupEventParticipation).where(
+                    GroupEventParticipation.chest_number == s.chest_number
+                ).options(
+                    selectinload(GroupEventParticipation.participant).selectinload(
+                        UnitMembers.registered_user
+                    ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
+                ).limit(1)
+                part_result = await db.execute(part_stmt)
+                participation = part_result.scalar_one_or_none()
+                
+                unit_name = None
+                district_name = None
+                if participation and participation.participant:
+                    if participation.participant.registered_user and participation.participant.registered_user.unit_name:
+                        unit_name = participation.participant.registered_user.unit_name.name
+                        if participation.participant.registered_user.unit_name.district:
+                            district_name = participation.participant.registered_user.unit_name.district.name
+                
+                results_list.append({
                     "id": s.id,
                     "event_name": s.event_name,
                     "chest_number": s.chest_number,
+                    "unit_name": unit_name,
+                    "district_name": district_name,
                     "awarded_mark": s.awarded_mark,
                     "grade": s.grade,
                     "grade_points": getattr(s, 'grade_points', 0),
@@ -1676,9 +1704,9 @@ async def view_group_scores(
                     "rank_points": getattr(s, 'rank_points', 0),
                     "total_points": s.total_points,
                     "added_on": s.added_on.isoformat() if s.added_on else None,
-                }
-                for s in scores
-            ]
+                })
+            
+            results_dict[event_name] = results_list
     
     return {"results_dict": results_dict}
 
@@ -1827,7 +1855,9 @@ async def get_scores_for_event(
         IndividualEventParticipation.individual_event_id == IndividualEvent.id
     ).where(IndividualEvent.name == event_name).options(
         selectinload(IndividualEventScoreCard.participation),
-        selectinload(IndividualEventScoreCard.participant)
+        selectinload(IndividualEventScoreCard.participant).selectinload(
+            UnitMembers.registered_user
+        ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
     ).order_by(IndividualEventScoreCard.total_points.desc())
     result = await db.execute(stmt)
     scores = list(result.scalars().all())
@@ -1839,12 +1869,14 @@ async def get_scores_for_event(
                 "id": s.id,
                 "event_participation_id": s.event_participation_id,
                 "participant_id": s.participant_id,
+                "participant_name": s.participant.name if s.participant else None,
+                "chest_number": s.participation.chest_number if s.participation else None,
+                "unit_name": s.participant.registered_user.unit_name.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name else None,
+                "district_name": s.participant.registered_user.unit_name.district.name if s.participant and s.participant.registered_user and s.participant.registered_user.unit_name and s.participant.registered_user.unit_name.district else None,
                 "awarded_mark": s.awarded_mark,
                 "grade": s.grade,
                 "total_points": s.total_points,
                 "added_on": s.added_on.isoformat() if s.added_on else None,
-                "chest_number": s.participation.chest_number if s.participation else None,
-                "participant_name": s.participant.name if s.participant else None,
             }
             for s in scores
         ],
@@ -1864,20 +1896,43 @@ async def get_group_scores_for_event(
     result = await db.execute(stmt)
     scores = list(result.scalars().all())
     
+    # Get unit and district info for each score
+    event_scores = []
+    for s in scores:
+        # Query for participation to get unit/district info
+        part_stmt = select(GroupEventParticipation).where(
+            GroupEventParticipation.chest_number == s.chest_number
+        ).options(
+            selectinload(GroupEventParticipation.participant).selectinload(
+                UnitMembers.registered_user
+            ).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
+        ).limit(1)
+        part_result = await db.execute(part_stmt)
+        participation = part_result.scalar_one_or_none()
+        
+        unit_name = None
+        district_name = None
+        if participation and participation.participant:
+            if participation.participant.registered_user and participation.participant.registered_user.unit_name:
+                unit_name = participation.participant.registered_user.unit_name.name
+                if participation.participant.registered_user.unit_name.district:
+                    district_name = participation.participant.registered_user.unit_name.district.name
+        
+        event_scores.append({
+            "id": s.id,
+            "event_name": s.event_name,
+            "chest_number": s.chest_number,
+            "unit_name": unit_name,
+            "district_name": district_name,
+            "awarded_mark": s.awarded_mark,
+            "grade": s.grade,
+            "total_points": s.total_points,
+            "added_on": s.added_on.isoformat() if s.added_on else None,
+        })
+    
     return {
         "event_name": event_name,
-        "event_scores": [
-            {
-                "id": s.id,
-                "event_name": s.event_name,
-                "chest_number": s.chest_number,
-                "awarded_mark": s.awarded_mark,
-                "grade": s.grade,
-                "total_points": s.total_points,
-                "added_on": s.added_on.isoformat() if s.added_on else None,
-            }
-            for s in scores
-        ],
+        "event_scores": event_scores,
     }
 
 
@@ -1943,7 +1998,7 @@ async def get_unit_wise_results(
             UnitMembers, IndividualEventScoreCard.participant_id == UnitMembers.id
         ).where(
             UnitMembers.registered_user.has(unit_name_id=unit.id)
-        ).order_by(IndividualEventScoreCard.total_points.desc()).limit(3)
+        ).order_by(IndividualEventScoreCard.total_points.desc())
         result = await db.execute(stmt)
         scores = list(result.scalars().all())
         
@@ -1986,7 +2041,7 @@ async def get_district_wise_results(
             UnitName, CustomUser.unit_name_id == UnitName.id
         ).where(
             UnitName.clergy_district_id == district.id
-        ).order_by(IndividualEventScoreCard.total_points.desc()).limit(3)
+        ).order_by(IndividualEventScoreCard.total_points.desc())
         result = await db.execute(stmt)
         scores = list(result.scalars().all())
         
@@ -2077,7 +2132,7 @@ async def export_results(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Export top 3 results for all events."""
+    """Export all results for all events."""
     from app.common.exporter import export_kalamela_results
     
     # Get all events
@@ -2089,7 +2144,7 @@ async def export_results(
     result = await db.execute(stmt)
     group_events = list(result.scalars().all())
     
-    # Get top 3 for each individual event
+    # Get all results for each individual event
     individual_results = {}
     for event in individual_events:
         stmt = select(IndividualEventScoreCard).join(
@@ -2102,11 +2157,11 @@ async def export_results(
                 UnitMembers.registered_user
             ).selectinload(CustomUser.unit_name),
             selectinload(IndividualEventScoreCard.participation),
-        ).order_by(IndividualEventScoreCard.total_points.desc()).limit(3)
+        ).order_by(IndividualEventScoreCard.total_points.desc())
         result = await db.execute(stmt)
-        top_scores = list(result.scalars().all())
+        all_scores = list(result.scalars().all())
         
-        if top_scores:
+        if all_scores:
             individual_results[event.name] = [
                 {
                     "position": idx + 1,
@@ -2114,26 +2169,26 @@ async def export_results(
                     "unit_name": score.participant.registered_user.unit_name.name,
                     "total_points": score.total_points,
                 }
-                for idx, score in enumerate(top_scores)
+                for idx, score in enumerate(all_scores)
             ]
     
-    # Get top 3 for each group event
+    # Get all results for each group event
     group_results = {}
     for event in group_events:
         stmt = select(GroupEventScoreCard).where(
             GroupEventScoreCard.event_name == event.name
-        ).order_by(GroupEventScoreCard.total_points.desc()).limit(3)
+        ).order_by(GroupEventScoreCard.total_points.desc())
         result = await db.execute(stmt)
-        top_scores = list(result.scalars().all())
+        all_scores = list(result.scalars().all())
         
-        if top_scores:
+        if all_scores:
             group_results[event.name] = [
                 {
                     "position": idx + 1,
                     "chest_number": score.chest_number,
                     "total_points": score.total_points,
                 }
-                for idx, score in enumerate(top_scores)
+                for idx, score in enumerate(all_scores)
             ]
     
     excel_file = export_kalamela_results(individual_results, group_results)

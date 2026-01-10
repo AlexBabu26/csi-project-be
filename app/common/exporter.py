@@ -578,17 +578,26 @@ def export_kalamela_results(
     group_results: Dict[str, List[Dict]],
 ) -> BytesIO:
     """
-    Export top 3 results for each event.
+    Export all results for each event.
     
-    Columns: No., Name, Unit, Event, Position
+    Columns: No., Name, Unit, Event, Position, Points
     
     Args:
-        individual_results: Dict of event name → top 3 participants
-        group_results: Dict of event name → top 3 teams
+        individual_results: Dict of event name → all participants
+        group_results: Dict of event name → all teams
     
     Returns:
         BytesIO object containing the Excel file
     """
+    def format_position(position: int) -> str:
+        """Format position number to ordinal (1st, 2nd, 3rd, 4th, etc.)"""
+        if position == 0:
+            return ""
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(
+            position % 10 if position % 100 not in (11, 12, 13) else 0, 'th'
+        )
+        return f"{position}{suffix} Place"
+    
     wb = Workbook()
     
     # Individual results sheet
@@ -596,8 +605,8 @@ def export_kalamela_results(
     ws_ind.title = "Individual Results"
     
     # Title
-    title = "Individual Event Results - Top 3"
-    ws_ind.merge_cells('A1:E1')
+    title = "Individual Event Results - All Results"
+    ws_ind.merge_cells('A1:F1')
     title_cell = ws_ind['A1']
     title_cell.value = title
     title_cell.font = Font(bold=True, size=14)
@@ -626,13 +635,7 @@ def export_kalamela_results(
     for event_name, results in individual_results.items():
         for result in results:
             position = result.get('position', 0)
-            position_text = ""
-            if position == 1:
-                position_text = "1st Place"
-            elif position == 2:
-                position_text = "2nd Place"
-            elif position == 3:
-                position_text = "3rd Place"
+            position_text = format_position(position)
             
             ws_ind.cell(row=row_num, column=1, value=entry_num).border = thin_border
             ws_ind.cell(row=row_num, column=2, value=result.get('participant_name', '')).border = thin_border
@@ -651,7 +654,7 @@ def export_kalamela_results(
     ws_grp = wb.create_sheet("Group Results")
     
     # Title
-    title = "Group Event Results - Top 3"
+    title = "Group Event Results - All Results"
     ws_grp.merge_cells('A1:E1')
     title_cell = ws_grp['A1']
     title_cell.value = title
@@ -673,13 +676,7 @@ def export_kalamela_results(
     for event_name, results in group_results.items():
         for result in results:
             position = result.get('position', 0)
-            position_text = ""
-            if position == 1:
-                position_text = "1st Place"
-            elif position == 2:
-                position_text = "2nd Place"
-            elif position == 3:
-                position_text = "3rd Place"
+            position_text = format_position(position)
             
             ws_grp.cell(row=row_num, column=1, value=entry_num).border = thin_border
             ws_grp.cell(row=row_num, column=2, value=result.get('chest_number', '')).border = thin_border
