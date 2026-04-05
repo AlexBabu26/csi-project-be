@@ -14,6 +14,21 @@ from app.yuvalokham.models import (
 )
 
 
+# --- Lookup ---
+
+class YMDistrictItem(BaseModel):
+    id: int
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class YMUnitItem(BaseModel):
+    id: int
+    name: str
+    clergy_district_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
 # --- Auth ---
 
 class YMUserRegister(BaseModel):

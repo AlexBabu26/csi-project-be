@@ -439,12 +439,12 @@ class YuvalokhamService:
         if cover:
             if mag.cover_image_url:
                 delete_file(mag.cover_image_url)
-            key, _ = save_upload_file(cover, "yuvalokham/magazines/covers")
+            key, _ = save_upload_file(cover, "yuvalokham/magazines/covers", max_size_mb=10)
             mag.cover_image_url = key
         if pdf:
             if mag.pdf_file_url:
                 delete_file(mag.pdf_file_url)
-            key, _ = save_upload_file(pdf, "yuvalokham/magazines/pdfs")
+            key, _ = save_upload_file(pdf, "yuvalokham/magazines/pdfs", max_size_mb=50)
             mag.pdf_file_url = key
         await db.flush()
         return mag

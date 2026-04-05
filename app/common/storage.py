@@ -31,7 +31,7 @@ def get_s3_client():
     )
 
 
-def _validate_upload(file: UploadFile) -> None:
+def _validate_upload(file: UploadFile, max_size_mb: int | None = None) -> None:
     """Validate uploaded file before saving."""
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename")
@@ -43,25 +43,27 @@ def _validate_upload(file: UploadFile) -> None:
             detail=f"Unsupported file type: {suffix or 'unknown'}"
         )
     
-    # Check file size
-    file.file.seek(0, 2)  # Seek to end
+    limit = max_size_mb or settings.max_upload_size_mb
+
+    file.file.seek(0, 2)
     file_size = file.file.tell()
-    file.file.seek(0)  # Reset to beginning
+    file.file.seek(0)
     
-    if file_size > settings.max_upload_size_mb * 1024 * 1024:
+    if file_size > limit * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB"
+            detail=f"File too large. Maximum size: {limit}MB"
         )
 
 
-def save_upload_file(file: UploadFile, subdir: str = "") -> Tuple[str, str]:
+def save_upload_file(file: UploadFile, subdir: str = "", max_size_mb: int | None = None) -> Tuple[str, str]:
     """
     Upload file to Backblaze B2 storage.
     
     Args:
         file: FastAPI UploadFile object
         subdir: Subdirectory path within bucket (e.g., "units/proofs", "kalamela/payments")
+        max_size_mb: Override the global max upload size for this call
     
     Returns:
         Tuple of (object_key, object_key) - key is the B2 object identifier
@@ -69,7 +71,7 @@ def save_upload_file(file: UploadFile, subdir: str = "") -> Tuple[str, str]:
     Raises:
         HTTPException: If validation fails or upload fails
     """
-    _validate_upload(file)
+    _validate_upload(file, max_size_mb=max_size_mb)
     
     # Generate unique object key
     suffix = Path(file.filename or "").suffix

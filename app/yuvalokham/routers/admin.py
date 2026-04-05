@@ -14,6 +14,13 @@ from app.yuvalokham.service import YuvalokhamService, get_ym_admin_user, _build_
 router = APIRouter()
 
 
+def _payment_response(p) -> ym_schema.YMPaymentResponse:
+    resp = ym_schema.YMPaymentResponse.model_validate(p)
+    if p.proof_file_url:
+        resp.proof_file_url = get_file_url(p.proof_file_url)
+    return resp
+
+
 # --- Users ---
 
 @router.get("/users", response_model=Paginated[ym_schema.YMUserResponse])
@@ -129,7 +136,7 @@ async def list_payments(
     _: YMUser = Depends(get_ym_admin_user),
 ):
     items, total = await YuvalokhamService.get_all_payments(db, status_filter, skip, limit)
-    return Paginated(items=items, total=total, page=skip // limit + 1, size=limit)
+    return Paginated(items=[_payment_response(p) for p in items], total=total, page=skip // limit + 1, size=limit)
 
 
 @router.patch("/payments/{payment_id}/approve", response_model=ym_schema.YMPaymentResponse)
@@ -138,7 +145,8 @@ async def approve_payment(
     admin: YMUser = Depends(get_ym_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    return await YuvalokhamService.approve_payment(db, payment_id, admin)
+    payment = await YuvalokhamService.approve_payment(db, payment_id, admin)
+    return _payment_response(payment)
 
 
 @router.patch("/payments/{payment_id}/reject", response_model=ym_schema.YMPaymentResponse)
@@ -148,7 +156,8 @@ async def reject_payment(
     admin: YMUser = Depends(get_ym_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    return await YuvalokhamService.reject_payment(db, payment_id, admin, data.remarks)
+    payment = await YuvalokhamService.reject_payment(db, payment_id, admin, data.remarks)
+    return _payment_response(payment)
 
 
 # --- Magazines ---
@@ -258,9 +267,12 @@ async def close_complaint(
 @router.get("/qr-settings", response_model=Optional[ym_schema.YMQrSettingResponse])
 async def get_qr_settings(db: AsyncSession = Depends(get_async_db), _: YMUser = Depends(get_ym_admin_user)):
     qr = await YuvalokhamService.get_qr_setting(db)
-    if qr and qr.qr_image_url:
-        qr.qr_image_url = get_file_url(qr.qr_image_url)
-    return qr
+    if not qr:
+        return None
+    resp = ym_schema.YMQrSettingResponse.model_validate(qr)
+    if qr.qr_image_url:
+        resp.qr_image_url = get_file_url(qr.qr_image_url)
+    return resp
 
 
 @router.put("/qr-settings", response_model=ym_schema.YMQrSettingResponse)
@@ -270,7 +282,11 @@ async def update_qr_settings(
     admin: YMUser = Depends(get_ym_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    return await YuvalokhamService.update_qr_setting(db, admin, qr_image, description)
+    qr = await YuvalokhamService.update_qr_setting(db, admin, qr_image, description)
+    resp = ym_schema.YMQrSettingResponse.model_validate(qr)
+    if qr.qr_image_url:
+        resp.qr_image_url = get_file_url(qr.qr_image_url)
+    return resp
 
 
 # --- Analytics ---

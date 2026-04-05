@@ -14,6 +14,13 @@ from app.yuvalokham.service import YuvalokhamService, get_ym_current_user, _buil
 router = APIRouter()
 
 
+def _payment_response(p) -> ym_schema.YMPaymentResponse:
+    resp = ym_schema.YMPaymentResponse.model_validate(p)
+    if p.proof_file_url:
+        resp.proof_file_url = get_file_url(p.proof_file_url)
+    return resp
+
+
 @router.get("/profile", response_model=ym_schema.YMUserResponse)
 async def get_profile(current_user: YMUser = Depends(get_ym_current_user)):
     return _build_user_response(current_user)
@@ -67,9 +74,12 @@ async def get_qr_code(
     _: YMUser = Depends(get_ym_current_user),
 ):
     qr = await YuvalokhamService.get_qr_setting(db)
-    if qr and qr.qr_image_url:
-        qr.qr_image_url = get_file_url(qr.qr_image_url)
-    return qr
+    if not qr:
+        return None
+    resp = ym_schema.YMQrSettingResponse.model_validate(qr)
+    if qr.qr_image_url:
+        resp.qr_image_url = get_file_url(qr.qr_image_url)
+    return resp
 
 
 @router.post("/payments", response_model=ym_schema.YMPaymentResponse, status_code=201)
@@ -79,7 +89,8 @@ async def submit_payment(
     current_user: YMUser = Depends(get_ym_current_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    return await YuvalokhamService.submit_payment(db, current_user, subscription_id, proof)
+    payment = await YuvalokhamService.submit_payment(db, current_user, subscription_id, proof)
+    return _payment_response(payment)
 
 
 @router.get("/payments", response_model=Paginated[ym_schema.YMPaymentResponse])
@@ -89,7 +100,7 @@ async def list_payments(
     db: AsyncSession = Depends(get_async_db),
 ):
     items, total = await YuvalokhamService.get_user_payments(db, current_user.id, skip, limit)
-    return Paginated(items=items, total=total, page=skip // limit + 1, size=limit)
+    return Paginated(items=[_payment_response(p) for p in items], total=total, page=skip // limit + 1, size=limit)
 
 
 @router.get("/magazines", response_model=List[ym_schema.YMMagazineResponse])
