@@ -9,6 +9,7 @@ from app.units.routers import user as units_user
 from app.conference.routers import official as conference_official, public as conference_public
 from app.admin.routers import units as admin_units, conference as admin_conference, system as admin_system, site as admin_site, users as admin_users
 from app.kalamela.routers import public as kalamela_public, official as kalamela_official, admin as kalamela_admin
+from app.yuvalokham.routers import auth as ym_auth, user as ym_user, admin as ym_admin
 
 
 settings = get_settings()
@@ -22,6 +23,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
         "https://csi-webapp-fe.vercel.app",
     ],
     allow_credentials=True,
@@ -45,6 +50,9 @@ app.include_router(admin_users.router, prefix="/api/admin/users", tags=["admin-u
 app.include_router(kalamela_public.router, prefix="/api/kalamela", tags=["kalamela-public"])
 app.include_router(kalamela_official.router, prefix="/api/kalamela/official", tags=["kalamela-official"])
 app.include_router(kalamela_admin.router, prefix="/api/kalamela/admin", tags=["kalamela-admin"])
+app.include_router(ym_auth.router, prefix="/api/yuvalokham/auth", tags=["yuvalokham-auth"])
+app.include_router(ym_user.router, prefix="/api/yuvalokham/user", tags=["yuvalokham-user"])
+app.include_router(ym_admin.router, prefix="/api/yuvalokham/admin", tags=["yuvalokham-admin"])
 
 
 @app.get("/api/health", tags=["system"])
@@ -66,4 +74,4 @@ async def health() -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=7000, reload=True)

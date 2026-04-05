@@ -11,6 +11,7 @@ import app.units.models  # noqa
 import app.conference.models  # noqa
 import app.kalamela.models  # noqa
 import app.admin.models  # noqa
+import app.yuvalokham.models  # noqa
 
 config = context.config
 
