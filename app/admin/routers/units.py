@@ -1,13 +1,14 @@
 """Admin units router - administrative endpoints for units management."""
 
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func, and_
+from datetime import date, datetime
+from typing import List, Optional
+from fastapi import APIRouter, Body, Depends, HTTPException, status, Query
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
-from app.common.security import get_current_user
+from app.common.security import get_current_user, get_current_user_sync
 from app.common.cache import get_cache, set_cache
 from app.auth.models import (
     CustomUser,
@@ -507,6 +508,160 @@ async def list_all_unit_members(
     return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
+# ── Archive Preview ──────────────────────────────────────────────────────────
+
+@router.get("/archive-preview", response_model=dict)
+async def archive_preview(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Return all active unit members whose DOB falls outside the configured
+    Min DOB / Max DOB limits (i.e. candidates for yearly archiving).
+    Reads limits from site_settings; falls back to 1990-01-01 / 2011-12-31.
+    """
+    from app.admin.models import SiteSettings
+
+    # Load DOB limits from site settings
+    ss_result = await db.execute(select(SiteSettings))
+    ss = ss_result.scalar_one_or_none()
+    min_dob: date = (ss.member_min_dob if ss and ss.member_min_dob else date(1990, 1, 1))
+    max_dob: date = (ss.member_max_dob if ss and ss.member_max_dob else date(2011, 12, 31))
+
+    # Find members whose DOB is outside [min_dob, max_dob]
+    stmt = (
+        select(UnitMembers)
+        .options(
+            selectinload(UnitMembers.registered_user)
+            .selectinload(CustomUser.unit_name)
+        )
+        .where(
+            or_(
+                UnitMembers.dob < min_dob,
+                UnitMembers.dob > max_dob,
+            )
+        )
+        .order_by(UnitMembers.dob.asc())
+    )
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+
+    data = [
+        {
+            "id": m.id,
+            "name": m.name,
+            "gender": m.gender,
+            "dob": m.dob.isoformat() if m.dob else None,
+            "age": m.age,
+            "number": m.number,
+            "qualification": m.qualification,
+            "blood_group": m.blood_group,
+            "unit_name": (
+                m.registered_user.unit_name.name
+                if m.registered_user and m.registered_user.unit_name else None
+            ),
+            "registered_user_id": m.registered_user_id,
+        }
+        for m in members
+    ]
+
+    return {
+        "data": data,
+        "total": len(data),
+        "min_dob": min_dob.isoformat(),
+        "max_dob": max_dob.isoformat(),
+    }
+
+
+# ── Bulk Archive ──────────────────────────────────────────────────────────────
+
+@router.post("/bulk-archive", response_model=dict)
+async def bulk_archive_members(
+    member_ids: List[int] = Body(..., embed=True),
+    archive_year: str = Body(..., embed=True),
+    archive_reason: Optional[str] = Body(None, embed=True),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Archive a set of active unit members into archived_unit_member with a
+    registration year label (e.g. "2025-2026").
+    """
+    if not member_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No member IDs provided")
+
+    stmt = select(UnitMembers).where(UnitMembers.id.in_(member_ids))
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+
+    found_ids = {m.id for m in members}
+    missing = set(member_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Members not found: {sorted(missing)}",
+        )
+
+    archived_count = 0
+    for member in members:
+        archived = ArchivedUnitMember(
+            registered_user_id=member.registered_user_id,
+            name=member.name,
+            gender=member.gender,
+            dob=member.dob,
+            number=member.number,
+            qualification=member.qualification,
+            blood_group=member.blood_group,
+            archived_at=datetime.utcnow(),
+            archive_year=archive_year.strip(),
+            archive_reason=archive_reason,
+        )
+        db.add(archived)
+        await db.delete(member)
+        archived_count += 1
+
+    await db.commit()
+    return {
+        "message": f"{archived_count} member(s) archived successfully",
+        "archived_count": archived_count,
+        "archive_year": archive_year,
+    }
+
+
+# ── Restore Archived Member ───────────────────────────────────────────────────
+
+@router.post("/restore-member/{member_id}", response_model=dict)
+async def restore_archived_member(
+    member_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Restore an archived member back to active unit_members."""
+    stmt = select(ArchivedUnitMember).where(ArchivedUnitMember.id == member_id)
+    result = await db.execute(stmt)
+    archived = result.scalar_one_or_none()
+
+    if not archived:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archived member not found")
+
+    active_member = UnitMembers(
+        registered_user_id=archived.registered_user_id,
+        name=archived.name,
+        gender=archived.gender,
+        dob=archived.dob,
+        number=archived.number,
+        qualification=archived.qualification,
+        blood_group=archived.blood_group,
+    )
+    db.add(active_member)
+    await db.delete(archived)
+    await db.commit()
+
+    return {"message": f"{archived.name} has been restored to active members"}
+
+
+# ── Archived Unit Members List ────────────────────────────────────────────────
+
 # Archived Unit Members Endpoint with Pagination
 @router.get("/archived-members", response_model=dict)
 async def list_all_archived_members(
@@ -519,13 +674,20 @@ async def list_all_archived_members(
     # Get total count
     count_stmt = select(func.count()).select_from(ArchivedUnitMember)
     total = (await db.execute(count_stmt)).scalar() or 0
-    
-    # Get paginated data
+
+    # Get paginated data — join CustomUser → UnitName to resolve the unit name
     offset = (page - 1) * page_size
-    stmt = select(ArchivedUnitMember).order_by(ArchivedUnitMember.archived_at.desc()).offset(offset).limit(page_size)
+    stmt = (
+        select(ArchivedUnitMember, UnitName.name.label("unit_name"))
+        .outerjoin(CustomUser, CustomUser.id == ArchivedUnitMember.registered_user_id)
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .order_by(ArchivedUnitMember.archived_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
     result = await db.execute(stmt)
-    archived_list = list(result.scalars().all())
-    
+    rows = result.all()
+
     data = [
         {
             "id": member.id,
@@ -538,11 +700,144 @@ async def list_all_archived_members(
             "qualification": member.qualification,
             "blood_group": member.blood_group,
             "archived_at": member.archived_at.isoformat() if member.archived_at else None,
+            "archive_year": member.archive_year,
+            "archive_reason": member.archive_reason,
+            "unit_name": unit_name,
         }
-        for member in archived_list
+        for member, unit_name in rows
     ]
-    
+
     return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
+
+
+# ── Blood Donor Search ────────────────────────────────────────────────────────
+
+@router.get("/blood-donor-search", response_model=dict)
+async def blood_donor_search(
+    blood_group: Optional[str] = Query(None, description="Filter by blood group e.g. O+"),
+    name: Optional[str] = Query(None, description="Partial name search"),
+    gender: Optional[str] = Query(None, description="Filter by gender: M or F"),
+    districts: List[str] = Query(default=[], description="Filter by district names (multi-select)"),
+    units: List[str] = Query(default=[], description="Filter by unit names (multi-select)"),
+    include_archived: bool = Query(True, description="Include archived members"),
+    current_user: CustomUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Search for blood donors across active and archived unit members.
+    Access: Admin always allowed. District officials / unit users only if enabled in site settings.
+    """
+    from app.admin.models import SiteSettings
+
+    # ── Permission check ──────────────────────────────────────────────────────
+    if current_user.user_type != UserType.ADMIN:
+        ss_result = await db.execute(select(SiteSettings))
+        ss = ss_result.scalar_one_or_none()
+        user_type_val = current_user.user_type.value if hasattr(current_user.user_type, 'value') else current_user.user_type
+        is_district = user_type_val == "DISTRICT_OFFICIAL"
+        is_unit = user_type_val == "UNIT"
+        if is_district and not (ss and ss.blood_donor_district_access):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blood Donor Search not enabled for District Officials")
+        if is_unit and not (ss and ss.blood_donor_unit_access):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blood Donor Search not enabled for Unit Officials")
+        if not (is_district or is_unit):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    results = []
+
+    # ── Helper: build filters ─────────────────────────────────────────────────
+    def name_filter(col): return col.ilike(f"%{name}%") if name else True
+    def unit_filter(col): return col.in_(units) if units else True
+    def district_filter(col): return col.in_(districts) if districts else True
+    def bg_filter(col): return col == blood_group if blood_group else True
+    def gender_filter(col): return col == gender if gender else True
+
+    # ── Active members ─────────────────────────────────────────────────────────
+    active_stmt = (
+        select(
+            UnitMembers.id,
+            UnitMembers.name,
+            UnitMembers.gender,
+            UnitMembers.dob,
+            UnitMembers.number,
+            UnitMembers.blood_group,
+            UnitMembers.qualification,
+            UnitName.name.label("unit_name"),
+            ClergyDistrict.name.label("district_name"),
+        )
+        .outerjoin(CustomUser, CustomUser.id == UnitMembers.registered_user_id)
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .outerjoin(ClergyDistrict, ClergyDistrict.id == UnitName.clergy_district_id)
+        .where(bg_filter(UnitMembers.blood_group))
+        .where(name_filter(UnitMembers.name))
+        .where(gender_filter(UnitMembers.gender))
+        .where(unit_filter(UnitName.name))
+        .where(district_filter(ClergyDistrict.name))
+        .order_by(UnitMembers.name)
+        .limit(500)
+    )
+    active_rows = (await db.execute(active_stmt)).all()
+    for r in active_rows:
+        results.append({
+            "id": r.id,
+            "name": r.name,
+            "gender": r.gender,
+            "dob": r.dob.isoformat() if r.dob else None,
+            "blood_group": r.blood_group,
+            "number": r.number,
+            "qualification": r.qualification,
+            "unit_name": r.unit_name,
+            "district_name": r.district_name,
+            "status": "active",
+            "archive_year": None,
+        })
+
+    # ── Archived members ───────────────────────────────────────────────────────
+    if include_archived:
+        archived_stmt = (
+            select(
+                ArchivedUnitMember.id,
+                ArchivedUnitMember.name,
+                ArchivedUnitMember.gender,
+                ArchivedUnitMember.dob,
+                ArchivedUnitMember.number,
+                ArchivedUnitMember.blood_group,
+                ArchivedUnitMember.qualification,
+                ArchivedUnitMember.archive_year,
+                UnitName.name.label("unit_name"),
+                ClergyDistrict.name.label("district_name"),
+            )
+            .outerjoin(CustomUser, CustomUser.id == ArchivedUnitMember.registered_user_id)
+            .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+            .outerjoin(ClergyDistrict, ClergyDistrict.id == UnitName.clergy_district_id)
+            .where(bg_filter(ArchivedUnitMember.blood_group))
+            .where(name_filter(ArchivedUnitMember.name))
+            .where(gender_filter(ArchivedUnitMember.gender))
+            .where(unit_filter(UnitName.name))
+            .where(district_filter(ClergyDistrict.name))
+            .order_by(ArchivedUnitMember.name)
+            .limit(500)
+        )
+        archived_rows = (await db.execute(archived_stmt)).all()
+        for r in archived_rows:
+            results.append({
+                "id": r.id,
+                "name": r.name,
+                "gender": r.gender,
+                "dob": r.dob.isoformat() if r.dob else None,
+                "blood_group": r.blood_group,
+                "number": r.number,
+                "qualification": r.qualification,
+                "unit_name": r.unit_name,
+                "district_name": r.district_name,
+                "status": "archived",
+                "archive_year": r.archive_year,
+            })
+
+    # Sort combined results: active first, then by name
+    results.sort(key=lambda x: (x["status"] != "active", x["name"] or ""))
+
+    return {"data": results, "total": len(results)}
 
 
 # Member Management

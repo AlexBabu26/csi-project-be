@@ -123,7 +123,7 @@ def update_site_settings(
     """Update site settings (admin only)."""
     settings = get_or_create_site_settings(db)
     
-    # Update flat fields
+    # Update flat fields (includes member_min_age / member_max_age when provided)
     update_data = data.model_dump(exclude_unset=True, exclude={"contact", "social_links"})
     for field, value in update_data.items():
         setattr(settings, field, value)
@@ -232,6 +232,20 @@ def get_file(file_path: str):
         if e.response['Error']['Code'] == 'NoSuchKey':
             raise HTTPException(status_code=404, detail="File not found")
         raise HTTPException(status_code=500, detail="Failed to retrieve file")
+
+
+# ============ MEMBER AGE LIMITS ENDPOINT ============
+
+@router.get("/member-age-limits", response_model=dict)
+def get_member_age_limits(db: Session = Depends(get_db)):
+    """
+    Public endpoint: returns the configured min/max DOB for unit member registration.
+    """
+    site = get_or_create_site_settings(db)
+    return {
+        "min_dob": site.member_min_dob.isoformat() if site.member_min_dob else "1990-01-01",
+        "max_dob": site.member_max_dob.isoformat() if site.member_max_dob else "2011-12-31",
+    }
 
 
 # ============ NOTICES ENDPOINTS ============

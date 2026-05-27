@@ -1,9 +1,9 @@
 """Admin module models for site settings, notices, and quick links."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.db import Base
@@ -22,6 +22,14 @@ class SiteSettings(Base):
     logo_tertiary_url: Mapped[Optional[str]] = mapped_column(String(500))
     registration_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     registration_closed_message: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Member registration DOB limits
+    member_min_dob: Mapped[Optional[date]] = mapped_column(Date, default=date(1990, 1, 1))
+    member_max_dob: Mapped[Optional[date]] = mapped_column(Date, default=date(2011, 12, 31))
+
+    # Blood Donor Search access
+    blood_donor_district_access: Mapped[bool] = mapped_column(Boolean, default=False)
+    blood_donor_unit_access: Mapped[bool] = mapped_column(Boolean, default=False)
     
     # Contact info
     contact_address: Mapped[Optional[str]] = mapped_column(Text)

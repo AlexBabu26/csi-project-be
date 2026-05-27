@@ -278,6 +278,9 @@ class UnitCouncilorChangeRequestResponse(BaseModel):
 
 
 # Unit Member Add Request Schemas
+VALID_BLOOD_GROUPS = {"A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
+
+
 class UnitMemberAddRequestBase(BaseModel):
     """Base schema for unit member add requests."""
     
@@ -286,8 +289,15 @@ class UnitMemberAddRequestBase(BaseModel):
     dob: date
     number: str = Field(..., min_length=1, max_length=30)
     qualification: Optional[str] = Field(None, max_length=255)
-    blood_group: Optional[str] = Field(None, max_length=10)
+    blood_group: str = Field(..., min_length=1, max_length=10)
     reason: str = Field(..., min_length=10, max_length=5000)
+
+    @field_validator("blood_group")
+    @classmethod
+    def validate_blood_group(cls, v: str) -> str:
+        if v not in VALID_BLOOD_GROUPS:
+            raise ValueError(f"Invalid blood group. Must be one of: {', '.join(sorted(VALID_BLOOD_GROUPS))}")
+        return v
 
 
 class UnitMemberAddRequestCreate(UnitMemberAddRequestBase):

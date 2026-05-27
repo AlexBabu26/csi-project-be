@@ -1,6 +1,6 @@
 """Pydantic schemas for admin site settings module."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,6 +35,10 @@ class SiteSettingsResponse(BaseModel):
     logo_tertiary_url: Optional[str]
     registration_enabled: bool
     registration_closed_message: Optional[str]
+    member_min_dob: Optional[str]
+    member_max_dob: Optional[str]
+    blood_donor_district_access: bool
+    blood_donor_unit_access: bool
     contact: ContactInfo
     social_links: SocialLinks
     updated_at: datetime
@@ -52,6 +56,10 @@ class SiteSettingsResponse(BaseModel):
             logo_tertiary_url=obj.logo_tertiary_url,
             registration_enabled=obj.registration_enabled,
             registration_closed_message=obj.registration_closed_message,
+            member_min_dob=obj.member_min_dob.isoformat() if obj.member_min_dob else "1990-01-01",
+            member_max_dob=obj.member_max_dob.isoformat() if obj.member_max_dob else "2011-12-31",
+            blood_donor_district_access=obj.blood_donor_district_access or False,
+            blood_donor_unit_access=obj.blood_donor_unit_access or False,
             contact=ContactInfo(
                 address=obj.contact_address,
                 email=obj.contact_email,
@@ -73,6 +81,10 @@ class SiteSettingsUpdate(BaseModel):
     about_text: Optional[str] = None
     registration_enabled: Optional[bool] = None
     registration_closed_message: Optional[str] = Field(None, max_length=255)
+    member_min_dob: Optional[date] = None
+    member_max_dob: Optional[date] = None
+    blood_donor_district_access: Optional[bool] = None
+    blood_donor_unit_access: Optional[bool] = None
     contact: Optional[ContactInfo] = None
     social_links: Optional[SocialLinks] = None
 

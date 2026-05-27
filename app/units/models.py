@@ -37,6 +37,8 @@ class ArchivedUnitMember(Base):
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
     archived_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    archive_year: Mapped[Optional[str]] = mapped_column(String(20))
+    archive_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     @property
     def age(self) -> int:
