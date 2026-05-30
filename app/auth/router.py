@@ -67,6 +67,13 @@ def register_unit(payload: auth_schema.UnitRegistrationRequest, db: Session = De
     return service.register_unit(payload)
 
 
+@router.get("/districts", response_model=list[auth_schema.ClergyDistrictItem])
+def list_districts(db: Session = Depends(get_db)):
+    """Get list of clergy districts for unit registration."""
+    service = AuthService(db)
+    return service.get_districts()
+
+
 @router.get("/unit-names", response_model=list[auth_schema.UnitName])
 def list_unit_names(district_id: int | None = None, db: Session = Depends(get_db)):
     """

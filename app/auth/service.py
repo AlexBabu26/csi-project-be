@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.admin.models import SiteSettings
 from app.auth.models import (
     ClergyDistrict,
     CustomUser,
@@ -212,8 +213,15 @@ class AuthService:
             Created user
         
         Raises:
-            HTTPException: If user already exists
+            HTTPException: If user already exists or registration is disabled
         """
+        site_settings = self.session.execute(select(SiteSettings).limit(1)).scalar_one_or_none()
+        if site_settings and not site_settings.registration_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unit registration is currently closed",
+            )
+
         existing = self.session.execute(
             select(CustomUser).where(
                 or_(
@@ -270,6 +278,11 @@ class AuthService:
         
         rows = self.session.execute(stmt.order_by(UnitName.name)).scalars().all()
         return [auth_schema.UnitName.model_validate(row) for row in rows]
+
+    def get_districts(self) -> List[auth_schema.ClergyDistrictItem]:
+        """Get all clergy districts for registration dropdowns."""
+        rows = self.session.execute(select(ClergyDistrict).order_by(ClergyDistrict.name)).scalars().all()
+        return [auth_schema.ClergyDistrictItem.model_validate(row) for row in rows]
 
     def create_clergy_district(self, name: str) -> ClergyDistrict:
         """

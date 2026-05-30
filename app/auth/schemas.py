@@ -69,6 +69,13 @@ class UnitName(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ClergyDistrictItem(BaseModel):
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UnitRegistrationRequest(BaseModel):
     email: EmailStr
     phone_number: str
