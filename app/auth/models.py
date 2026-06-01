@@ -12,6 +12,13 @@ class UserType(str, enum.Enum):
     ADMIN = "1"
     UNIT = "2"
     DISTRICT_OFFICIAL = "3"
+    BLOOD_BANK = "4"
+
+
+class ResidenceLocation(str, enum.Enum):
+    WITHIN_KERALA = "WITHIN_KERALA"
+    OUTSIDE_KERALA = "OUTSIDE_KERALA"
+    OUTSIDE_INDIA = "OUTSIDE_INDIA"
 
 
 class ClergyDistrict(Base):
@@ -68,6 +75,9 @@ class CustomUser(Base):
         "UnitOfficials", back_populates="registered_user", uselist=False
     )
     unit_councilors: Mapped[List["UnitCouncilor"]] = relationship("UnitCouncilor", back_populates="registered_user")
+    registration_cycles: Mapped[List["UnitRegistrationCycle"]] = relationship(
+        "UnitRegistrationCycle", back_populates="registered_user"
+    )
     refresh_tokens: Mapped[List["RefreshToken"]] = relationship("RefreshToken", back_populates="user")
 
 
@@ -103,6 +113,10 @@ class UnitMembers(Base):
     number: Mapped[Optional[str]] = mapped_column(String(30))
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
+    residence_location: Mapped[Optional[ResidenceLocation]] = mapped_column(
+        Enum(ResidenceLocation),
+        nullable=True,
+    )
 
     registered_user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="unit_members")
 

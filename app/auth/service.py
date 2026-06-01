@@ -4,10 +4,11 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.admin.models import SiteSettings
+from app.units.models import UnitRegistrationCycle
 from app.auth.models import (
     ClergyDistrict,
     CustomUser,
@@ -128,8 +129,9 @@ class AuthService:
         # Default redirect map
         default_redirects = {
             UserType.ADMIN: "/admin/dashboard",
-            UserType.UNIT: "/units/dashboard",
+            UserType.UNIT: "/register/wizard",
             UserType.DISTRICT_OFFICIAL: "/conference/official/home",  # Default for district officials
+            UserType.BLOOD_BANK: "/admin/blood-donor-search",
         }
         
         # Portal-specific redirects for DISTRICT_OFFICIAL
@@ -202,6 +204,39 @@ class AuthService:
         ).update({"revoked": True})
         self.session.commit()
 
+    def _registered_unit_ids_subquery(self):
+        """Unit names already assigned to a UNIT user."""
+        return select(CustomUser.unit_name_id).where(
+            CustomUser.unit_name_id.isnot(None),
+            CustomUser.user_type == UserType.UNIT,
+        )
+
+    @staticmethod
+    def _build_registration_number(district_name: str, user_id: int) -> str:
+        district_code = district_name[:3]
+        return f"MKDYM/{district_code}/00{user_id}"
+
+    def preview_registration_username(self, clergy_district_id: int) -> auth_schema.UsernamePreviewResponse:
+        """Preview the registration username format before account creation."""
+        district = self.session.execute(
+            select(ClergyDistrict).where(ClergyDistrict.id == clergy_district_id)
+        ).scalar_one_or_none()
+        if not district:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="District not found",
+            )
+
+        max_id = self.session.execute(select(func.max(CustomUser.id))).scalar() or 0
+        preview_id = max_id + 1
+        district_code = district.name[:3]
+        username_preview = self._build_registration_number(district.name, preview_id)
+
+        return auth_schema.UsernamePreviewResponse(
+            username_preview=username_preview,
+            district_code=district_code,
+        )
+
     def register_unit(self, payload: auth_schema.UnitRegistrationRequest) -> auth_schema.UserRead:
         """
         Register a new unit user.
@@ -222,27 +257,53 @@ class AuthService:
                 detail="Unit registration is currently closed",
             )
 
-        existing = self.session.execute(
-            select(CustomUser).where(
-                or_(
-                    CustomUser.email == payload.email,
-                    CustomUser.username == payload.email,
-                    CustomUser.phone_number == payload.phone_number,
-                )
-            )
+        district = self.session.execute(
+            select(ClergyDistrict).where(ClergyDistrict.id == payload.clergy_district_id)
         ).scalar_one_or_none()
-        
-        if existing:
+        if not district:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="District not found",
+            )
+
+        unit_name = self.session.execute(
+            select(UnitName).where(UnitName.id == payload.unit_name_id)
+        ).scalar_one_or_none()
+        if not unit_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Unit name not found",
+            )
+        if unit_name.clergy_district_id != payload.clergy_district_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User already exists"
+                detail="Unit does not belong to the selected district",
+            )
+
+        existing_unit = self.session.execute(
+            select(CustomUser).where(
+                CustomUser.unit_name_id == payload.unit_name_id,
+                CustomUser.user_type == UserType.UNIT,
+            )
+        ).scalar_one_or_none()
+        if existing_unit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unit has been registered already",
+            )
+
+        existing_phone = self.session.execute(
+            select(CustomUser).where(CustomUser.phone_number == payload.phone_number)
+        ).scalar_one_or_none()
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone number is already taken",
             )
 
         user = CustomUser(
-            email=payload.email,
-            username=payload.email,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
+            email="temp@temp.com",
+            username="temp",
             phone_number=payload.phone_number,
             user_type=UserType.UNIT,
             unit_name_id=payload.unit_name_id,
@@ -251,20 +312,39 @@ class AuthService:
         )
         self.session.add(user)
         self.session.flush()
-        
+
+        registration_number = self._build_registration_number(district.name, user.id)
+        user.email = registration_number
+        user.username = registration_number
+
         self.session.add(
             UnitRegistrationData(
                 registered_user_id=user.id,
                 status="Registration Started"
             )
         )
+
+        current_year = (
+            site_settings.current_registration_year
+            if site_settings and site_settings.current_registration_year
+            else datetime.utcnow().year
+        )
+        self.session.add(
+            UnitRegistrationCycle(
+                registered_user_id=user.id,
+                registration_year=current_year,
+                status="Registration Started",
+                path_type="fresh",
+            )
+        )
         self.session.commit()
+        self.session.refresh(user)
         
         return auth_schema.UserRead.model_validate(user)
 
     def get_unit_names(self, district_id: Optional[int] = None) -> List[auth_schema.UnitName]:
         """
-        Get list of unit names, optionally filtered by district.
+        Get unit names available for registration (excludes already registered units).
         
         Args:
             district_id: Optional district ID to filter by
@@ -272,7 +352,8 @@ class AuthService:
         Returns:
             List of unit names
         """
-        stmt = select(UnitName)
+        registered_ids = self._registered_unit_ids_subquery()
+        stmt = select(UnitName).where(UnitName.id.notin_(registered_ids))
         if district_id:
             stmt = stmt.where(UnitName.clergy_district_id == district_id)
         
@@ -280,8 +361,18 @@ class AuthService:
         return [auth_schema.UnitName.model_validate(row) for row in rows]
 
     def get_districts(self) -> List[auth_schema.ClergyDistrictItem]:
-        """Get all clergy districts for registration dropdowns."""
-        rows = self.session.execute(select(ClergyDistrict).order_by(ClergyDistrict.name)).scalars().all()
+        """Get clergy districts that have at least one unregistered unit."""
+        registered_ids = self._registered_unit_ids_subquery()
+        available_district_ids = (
+            select(UnitName.clergy_district_id)
+            .where(UnitName.id.notin_(registered_ids))
+            .distinct()
+        )
+        rows = self.session.execute(
+            select(ClergyDistrict)
+            .where(ClergyDistrict.id.in_(available_district_ids))
+            .order_by(ClergyDistrict.name)
+        ).scalars().all()
         return [auth_schema.ClergyDistrictItem.model_validate(row) for row in rows]
 
     def create_clergy_district(self, name: str) -> ClergyDistrict:

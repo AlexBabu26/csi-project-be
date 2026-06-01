@@ -96,6 +96,7 @@ def get_site_settings(db: Session = Depends(get_db), response: Response = None):
     response_dict["logo_primary_url"] = get_public_file_url(site_settings.logo_primary_url)
     response_dict["logo_secondary_url"] = get_public_file_url(site_settings.logo_secondary_url)
     response_dict["logo_tertiary_url"] = get_public_file_url(site_settings.logo_tertiary_url)
+    response_dict["payment_qr_url"] = get_public_file_url(site_settings.payment_qr_url)
     
     response_dict["quick_links"] = [
         {"id": ql.id, "label": ql.label, "url": ql.url, "enabled": ql.enabled}
@@ -153,9 +154,11 @@ def update_site_settings(
     # Invalidate cache after update
     clear_cache(SITE_SETTINGS_CACHE_KEY)
     
+    site_response = SiteSettingsResponse.from_orm_with_nested(settings).model_dump()
+    site_response["payment_qr_url"] = get_public_file_url(settings.payment_qr_url)
     return {
         "message": "Site settings updated successfully",
-        **SiteSettingsResponse.from_orm_with_nested(settings).model_dump()
+        **site_response
     }
 
 

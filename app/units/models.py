@@ -4,7 +4,7 @@ import enum
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
@@ -258,4 +258,80 @@ class UnitMemberAddRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+
+
+class RegistrationCyclePathType(str, enum.Enum):
+    """Whether a registration cycle is a first-time or renewal registration."""
+
+    FRESH = "fresh"
+    RENEWAL = "renewal"
+
+
+class UnitRegistrationCycle(Base):
+    """
+    Tracks per-year registration status for each unit.
+    One row per unit per registration year (ending year, e.g. 2025 = 2024-2025).
+    """
+
+    __tablename__ = "unit_registration_cycle"
+    __table_args__ = (
+        UniqueConstraint(
+            "registered_user_id",
+            "registration_year",
+            name="uq_unit_registration_cycle_user_year",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    registered_user_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=False, index=True
+    )
+    registration_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), default="Registration Started", nullable=False)
+    path_type: Mapped[str] = mapped_column(String(16), default="fresh", nullable=False)
+    member_count_at_submit: Mapped[Optional[int]] = mapped_column(Integer)
+    total_fee_at_submit: Mapped[Optional[int]] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    registered_user = relationship("CustomUser", back_populates="registration_cycles")
+    payments = relationship("UnitRegistrationPayment", back_populates="registration_cycle")
+
+
+class PaymentProofStatus(str, enum.Enum):
+    """Status enum for unit registration payment proof submissions."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class UnitRegistrationPayment(Base):
+    """
+    Tracks payment proof uploads for a unit's registration fee.
+    Multiple submissions are allowed per registration (partial proofs,
+    re-uploads after rejection, etc.). The registration is considered
+    paid once at least one entry reaches APPROVED status.
+    """
+
+    __tablename__ = "unit_registration_payment"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    registered_user_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=False, index=True
+    )
+    registration_cycle_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("unit_registration_cycle.id"), nullable=True, index=True
+    )
+    file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # B2 object key
+    total_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Amount at time of submission
+    status: Mapped[PaymentProofStatus] = mapped_column(
+        Enum(PaymentProofStatus), default=PaymentProofStatus.PENDING, nullable=False
+    )
+    rejection_note: Mapped[Optional[str]] = mapped_column(Text)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    reviewed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"))
+
+    registration_cycle = relationship("UnitRegistrationCycle", back_populates="payments")
 

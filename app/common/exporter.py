@@ -179,6 +179,38 @@ def create_members_excel(
     return create_styled_excel(headers, rows, "Unit Members")
 
 
+def create_password_reset_credentials_excel(
+    reset_users: List[Dict[str, Any]],
+    password: str,
+    sheet_title: str = "Password Reset",
+) -> BytesIO:
+    """Create Excel file listing reset credentials for sharing with users."""
+    headers = [
+        "S.No",
+        "Username",
+        "Unit Name",
+        "District",
+        "Phone",
+        "New Password",
+    ]
+
+    rows = []
+    for index, user in enumerate(reset_users, start=1):
+        row_password = user.get("new_password")
+        if row_password is None and password:
+            row_password = password
+        rows.append([
+            index,
+            user.get("username", ""),
+            user.get("unit_name", "") or "",
+            user.get("district_name", "") or "",
+            user.get("phone_number", "") or "",
+            row_password or "",
+        ])
+
+    return create_styled_excel(headers, rows, sheet_title)
+
+
 def create_councilors_excel(
     councilors_data: List[Dict[str, Any]],
     filename: str = "unit_councilors.xlsx",

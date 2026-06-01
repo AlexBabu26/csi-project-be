@@ -1,15 +1,18 @@
 """Admin units router - administrative endpoints for units management."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Body, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, status, Query, UploadFile
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_current_user_sync
-from app.common.cache import get_cache, set_cache
+from app.common.cache import get_cache, set_cache, clear_cache
+from app.common.storage import save_upload_file
+from app.admin.models import SiteSettings
+from app.admin.routers.site import get_public_file_url, SITE_SETTINGS_CACHE_KEY
 from app.auth.models import (
     CustomUser,
     UnitMembers,
@@ -20,6 +23,7 @@ from app.auth.models import (
     ClergyDistrict,
     UnitName,
     UserType,
+    ResidenceLocation,
 )
 from app.units.models import (
     UnitTransferRequest,
@@ -29,7 +33,11 @@ from app.units.models import (
     UnitMemberAddRequest,
     ArchivedUnitMember,
     RequestStatus,
+    UnitRegistrationCycle,
+    UnitRegistrationPayment,
+    PaymentProofStatus,
 )
+from app.units import registration_cycle_service as cycle_service
 from app.units.schemas import (
     UnitTransferRequestResponse,
     UnitMemberChangeRequestResponse,
@@ -41,6 +49,21 @@ from app.units.schemas import (
 from app.units import service as units_service
 
 router = APIRouter()
+
+
+def _onboarded_unit_name_ids_subquery(admin_user_id: int):
+    """UnitName IDs that have an active platform account with registration data."""
+    return (
+        select(CustomUser.unit_name_id)
+        .join(UnitRegistrationData, UnitRegistrationData.registered_user_id == CustomUser.id)
+        .where(
+            CustomUser.user_type == UserType.UNIT,
+            CustomUser.is_active.is_(True),
+            CustomUser.unit_name_id.isnot(None),
+            CustomUser.id != admin_user_id,
+        )
+        .distinct()
+    )
 
 
 async def get_admin_user(
@@ -82,23 +105,84 @@ async def admin_home_page(
     counts = result.one()
     total_dist_count = counts[0] or 0
     total_units_count = counts[1] or 0
+
+    current_year = await cycle_service.get_current_registration_year(db)
     
-    # Single query for completed registrations and district counts
+    # Completed registrations for the current registration year
     stmt = select(
-        func.count(distinct(UnitRegistrationData.id)).label('completed_units'),
+        func.count(distinct(UnitRegistrationCycle.id)).label('completed_units'),
         func.count(distinct(UnitName.clergy_district_id)).label('completed_districts')
-    ).select_from(UnitRegistrationData).join(
-        CustomUser, UnitRegistrationData.registered_user_id == CustomUser.id
+    ).select_from(UnitRegistrationCycle).join(
+        CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id
     ).join(
         UnitName, CustomUser.unit_name_id == UnitName.id
     ).where(
-        UnitRegistrationData.status == "Registration Completed",
-        UnitRegistrationData.registered_user_id != current_user.id
+        UnitRegistrationCycle.status == cycle_service.REGISTRATION_COMPLETED,
+        UnitRegistrationCycle.registration_year == current_year,
+        UnitRegistrationCycle.registered_user_id != current_user.id
     )
     result = await db.execute(stmt)
     completed = result.one()
     completed_units_count = completed[0] or 0
     completed_dist_count = completed[1] or 0
+
+    in_progress_result = await db.execute(
+        select(func.count(distinct(UnitRegistrationCycle.id))).select_from(
+            UnitRegistrationCycle
+        ).join(
+            CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id
+        ).where(
+            UnitRegistrationCycle.registration_year == current_year,
+            UnitRegistrationCycle.status != cycle_service.REGISTRATION_COMPLETED,
+            UnitRegistrationCycle.registered_user_id != current_user.id,
+        )
+    )
+    in_progress_units_count = in_progress_result.scalar() or 0
+
+    registered_units_result = await db.execute(
+        select(func.count(UnitRegistrationData.id)).where(
+            UnitRegistrationData.registered_user_id != current_user.id,
+        )
+    )
+    registered_units_count = registered_units_result.scalar() or 0
+    not_started_units_count = max(
+        0,
+        registered_units_count - completed_units_count - in_progress_units_count,
+    )
+
+    not_onboarded_result = await db.execute(
+        select(func.count(UnitName.id))
+        .select_from(UnitName)
+        .where(UnitName.id.not_in(_onboarded_unit_name_ids_subquery(current_user.id)))
+    )
+    not_onboarded_units_count = not_onboarded_result.scalar() or 0
+
+    pending_payments_result = await db.execute(
+        select(func.count(UnitRegistrationPayment.id))
+        .select_from(UnitRegistrationPayment)
+        .join(
+            UnitRegistrationCycle,
+            UnitRegistrationCycle.id == UnitRegistrationPayment.registration_cycle_id,
+        )
+        .where(
+            UnitRegistrationPayment.status == PaymentProofStatus.PENDING,
+            UnitRegistrationCycle.registration_year == current_year,
+        )
+    )
+    pending_payments_count = pending_payments_result.scalar() or 0
+
+    pending_requests_count = 0
+    for model in (
+        UnitTransferRequest,
+        UnitMemberChangeRequest,
+        UnitOfficialsChangeRequest,
+        UnitCouncilorChangeRequest,
+        UnitMemberAddRequest,
+    ):
+        req_result = await db.execute(
+            select(func.count(model.id)).where(model.status == RequestStatus.PENDING)
+        )
+        pending_requests_count += req_result.scalar() or 0
     
     # Single query for all member counts (total, male, female)
     stmt = select(
@@ -139,6 +223,13 @@ async def admin_home_page(
         "completed_units_count": completed_units_count,
         "completed_dists_percent": f"{completed_dists_percent:.2f}",
         "completed_units_percent": f"{completed_units_percent:.2f}",
+        "current_registration_year": current_year,
+        "registered_units_count": registered_units_count,
+        "in_progress_units_count": in_progress_units_count,
+        "not_started_units_count": not_started_units_count,
+        "not_onboarded_units_count": not_onboarded_units_count,
+        "pending_payments_count": pending_payments_count,
+        "pending_requests": pending_requests_count,
         "total_unit_members": unit_members_count,
         "total_male_members": unit_members_males_count,
         "total_female_members": unit_females_count,
@@ -159,6 +250,8 @@ async def list_all_units(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all registered units. Accessible via /all or root path."""
+    current_year = await cycle_service.get_current_registration_year(db)
+
     stmt = select(UnitRegistrationData).where(
         UnitRegistrationData.registered_user_id != current_user.id
     ).options(
@@ -166,6 +259,58 @@ async def list_all_units(
     )
     result = await db.execute(stmt)
     units_data = list(result.scalars().all())
+
+    user_ids = [u.registered_user_id for u in units_data]
+    cycles_by_user: dict[int, UnitRegistrationCycle] = {}
+    if user_ids:
+        cycles_result = await db.execute(
+            select(UnitRegistrationCycle).where(
+                UnitRegistrationCycle.registered_user_id.in_(user_ids),
+                UnitRegistrationCycle.registration_year == current_year,
+            )
+        )
+        for cycle in cycles_result.scalars().all():
+            cycles_by_user[cycle.registered_user_id] = cycle
+
+    payment_status_by_user: dict[int, str] = {}
+    if user_ids:
+        payments_result = await db.execute(
+            select(UnitRegistrationPayment).where(
+                UnitRegistrationPayment.registered_user_id.in_(user_ids),
+            )
+        )
+        payments = list(payments_result.scalars().all())
+        cycle_ids = {c.id for c in cycles_by_user.values()}
+        for user_id in user_ids:
+            cycle = cycles_by_user.get(user_id)
+            if not cycle:
+                payment_status_by_user[user_id] = "not_submitted"
+                continue
+            user_payments = sorted(
+                [p for p in payments if p.registration_cycle_id == cycle.id],
+                key=lambda p: p.submitted_at,
+            )
+            if not user_payments:
+                payment_status_by_user[user_id] = "not_submitted"
+            elif any(p.status == PaymentProofStatus.APPROVED for p in user_payments):
+                payment_status_by_user[user_id] = "approved"
+            elif user_payments[-1].status == PaymentProofStatus.REJECTED:
+                payment_status_by_user[user_id] = "rejected"
+            else:
+                payment_status_by_user[user_id] = "pending"
+
+    member_counts_by_user: dict[int, int] = {}
+    if user_ids:
+        member_counts_result = await db.execute(
+            select(
+                UnitMembers.registered_user_id,
+                func.count(UnitMembers.id).label("count"),
+            )
+            .where(UnitMembers.registered_user_id.in_(user_ids))
+            .group_by(UnitMembers.registered_user_id)
+        )
+        for row in member_counts_result.all():
+            member_counts_by_user[row.registered_user_id] = row.count or 0
     
     return [
         {
@@ -173,9 +318,49 @@ async def list_all_units(
             "user_id": unit_data.registered_user_id,
             "username": unit_data.registered_user.username,
             "unit_name": unit_data.registered_user.unit_name.name if unit_data.registered_user.unit_name else None,
-            "status": unit_data.status,
+            "member_count": member_counts_by_user.get(unit_data.registered_user_id, 0),
+            "status": cycles_by_user[unit_data.registered_user_id].status
+            if unit_data.registered_user_id in cycles_by_user
+            else "Not Started",
+            "registration_year": current_year,
+            "cycle_status": cycles_by_user[unit_data.registered_user_id].status
+            if unit_data.registered_user_id in cycles_by_user
+            else None,
+            "path_type": cycles_by_user[unit_data.registered_user_id].path_type
+            if unit_data.registered_user_id in cycles_by_user
+            else None,
+            "payment_status": payment_status_by_user.get(unit_data.registered_user_id, "not_submitted"),
         }
         for unit_data in units_data
+    ]
+
+
+@router.get("/not-onboarded", response_model=List[dict])
+async def list_not_onboarded_units(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Master-list churches with no active platform registration account."""
+    stmt = (
+        select(
+            UnitName.id,
+            UnitName.name,
+            UnitName.clergy_district_id,
+            ClergyDistrict.name.label("clergy_district"),
+        )
+        .join(ClergyDistrict, ClergyDistrict.id == UnitName.clergy_district_id)
+        .where(UnitName.id.not_in(_onboarded_unit_name_ids_subquery(current_user.id)))
+        .order_by(ClergyDistrict.name, UnitName.name)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "clergy_district_id": row.clergy_district_id,
+            "clergy_district": row.clergy_district,
+        }
+        for row in rows
     ]
 
 
@@ -474,10 +659,20 @@ async def list_all_unit_members(
     db: AsyncSession = Depends(get_async_db),
     page: int = 1,
     page_size: int = 50,
+    residence_location: Optional[ResidenceLocation] = Query(None),
+    missing_residence_location: Optional[bool] = Query(None),
 ):
     """List all unit members across all units with pagination."""
+    filters = []
+    if missing_residence_location:
+        filters.append(UnitMembers.residence_location.is_(None))
+    elif residence_location is not None:
+        filters.append(UnitMembers.residence_location == residence_location)
+
     # Get total count
     count_stmt = select(func.count()).select_from(UnitMembers)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar() or 0
     
     # Get paginated data
@@ -485,6 +680,8 @@ async def list_all_unit_members(
     stmt = select(UnitMembers).options(
         selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
     ).offset(offset).limit(page_size)
+    if filters:
+        stmt = stmt.where(*filters)
     result = await db.execute(stmt)
     members_list = list(result.scalars().all())
     
@@ -501,6 +698,7 @@ async def list_all_unit_members(
             "number": member.number,
             "qualification": member.qualification,
             "blood_group": member.blood_group,
+            "residence_location": member.residence_location.value if member.residence_location else None,
         }
         for member in members_list
     ]
@@ -730,12 +928,14 @@ async def blood_donor_search(
     from app.admin.models import SiteSettings
 
     # ── Permission check ──────────────────────────────────────────────────────
-    if current_user.user_type != UserType.ADMIN:
+    if current_user.user_type == UserType.BLOOD_BANK:
+        pass  # Dedicated blood bank users always have access
+    elif current_user.user_type != UserType.ADMIN:
         ss_result = await db.execute(select(SiteSettings))
         ss = ss_result.scalar_one_or_none()
         user_type_val = current_user.user_type.value if hasattr(current_user.user_type, 'value') else current_user.user_type
-        is_district = user_type_val == "DISTRICT_OFFICIAL"
-        is_unit = user_type_val == "UNIT"
+        is_district = user_type_val == "DISTRICT_OFFICIAL" or current_user.user_type == UserType.DISTRICT_OFFICIAL
+        is_unit = user_type_val == "UNIT" or current_user.user_type == UserType.UNIT
         if is_district and not (ss and ss.blood_donor_district_access):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blood Donor Search not enabled for District Officials")
         if is_unit and not (ss and ss.blood_donor_unit_access):
@@ -879,6 +1079,142 @@ async def reset_password(
     return {"message": f"Password for user {username} reset successfully"}
 
 
+
+# ── Registration Payment Review ──────────────────────────────────────────────
+
+
+@router.get("/registration-payments", response_model=List[dict])
+async def list_registration_payments(
+    payment_status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED"),
+    registration_year: Optional[int] = Query(None, description="Filter by registration year"),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all unit registration payment proof submissions."""
+    stmt = (
+        select(UnitRegistrationPayment, CustomUser, UnitName, UnitRegistrationCycle)
+        .join(CustomUser, CustomUser.id == UnitRegistrationPayment.registered_user_id)
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .outerjoin(
+            UnitRegistrationCycle,
+            UnitRegistrationCycle.id == UnitRegistrationPayment.registration_cycle_id,
+        )
+        .order_by(UnitRegistrationPayment.submitted_at.desc())
+    )
+    if payment_status:
+        try:
+            ps = PaymentProofStatus(payment_status.upper())
+            stmt = stmt.where(UnitRegistrationPayment.status == ps)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid status value")
+    if registration_year is not None:
+        stmt = stmt.where(UnitRegistrationCycle.registration_year == registration_year)
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    return [
+        {
+            "id": p.id,
+            "registered_user_id": p.registered_user_id,
+            "username": u.username,
+            "unit_name": un.name if un else None,
+            "registration_year": cycle.registration_year if cycle else None,
+            "file_url": get_public_file_url(p.file_path) if p.file_path else None,
+            "total_amount": p.total_amount,
+            "status": p.status.value,
+            "rejection_note": p.rejection_note,
+            "submitted_at": p.submitted_at.isoformat(),
+            "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
+        }
+        for p, u, un, cycle in rows
+    ]
+
+
+@router.post("/registration-payments/{payment_id}/approve", response_model=dict)
+async def approve_registration_payment(
+    payment_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Approve a unit registration payment proof submission."""
+    stmt = select(UnitRegistrationPayment).where(UnitRegistrationPayment.id == payment_id)
+    result = await db.execute(stmt)
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment submission not found")
+
+    payment.status = PaymentProofStatus.APPROVED
+    payment.rejection_note = None
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by_id = current_user.id
+    await db.commit()
+
+    return {"message": "Payment approved successfully", "id": payment_id}
+
+
+@router.post("/registration-payments/{payment_id}/reject", response_model=dict)
+async def reject_registration_payment(
+    payment_id: int,
+    rejection_note: str = Body(..., embed=True),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Reject a unit registration payment proof submission with a note."""
+    stmt = select(UnitRegistrationPayment).where(UnitRegistrationPayment.id == payment_id)
+    result = await db.execute(stmt)
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment submission not found")
+
+    if not rejection_note.strip():
+        raise HTTPException(status_code=400, detail="Rejection note is required")
+
+    payment.status = PaymentProofStatus.REJECTED
+    payment.rejection_note = rejection_note.strip()
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by_id = current_user.id
+    await db.commit()
+
+    return {"message": "Payment rejected", "id": payment_id}
+
+
+@router.post("/payment-qr", response_model=dict)
+async def upload_payment_qr(
+    file: UploadFile = File(..., description="QR code image for unit registration payment"),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Upload or replace the QR code used for unit registration fee collection."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AS
+    from app.common.storage import delete_file
+
+    # Get or create site settings
+    site_stmt = select(SiteSettings).limit(1)
+    site_result = await db.execute(site_stmt)
+    site = site_result.scalar_one_or_none()
+    if not site:
+        site = SiteSettings(app_name="CSI MKD YOUTH MOVEMENT")
+        db.add(site)
+        await db.flush()
+
+    # Delete old QR if exists
+    if site.payment_qr_url:
+        delete_file(site.payment_qr_url)
+
+    object_key, _ = save_upload_file(file, subdir="site/payment-qr")
+    site.payment_qr_url = object_key
+    await db.commit()
+    clear_cache(SITE_SETTINGS_CACHE_KEY)
+
+    return {
+        "message": "Payment QR code uploaded successfully",
+        "url": get_public_file_url(object_key),
+    }
+
+
 # Unit Details - MUST be last due to path parameter matching
 @router.get("/{unit_id}", response_model=dict)
 async def view_unit_details(
@@ -913,6 +1249,17 @@ async def view_unit_details(
     stmt = select(UnitMembers).where(UnitMembers.registered_user_id == unit_id)
     result = await db.execute(stmt)
     members = list(result.scalars().all())
+
+    current_year = await cycle_service.get_current_registration_year(db)
+    cycle_result = await db.execute(
+        select(UnitRegistrationCycle).where(
+            UnitRegistrationCycle.registered_user_id == unit_id,
+            UnitRegistrationCycle.registration_year == current_year,
+        )
+    )
+    cycle = cycle_result.scalar_one_or_none()
+
+    registration_year = current_year
     
     # Convert officials to dict
     officials_dict = None
@@ -958,6 +1305,9 @@ async def view_unit_details(
             "username": user.username,
             "unit_name": user.unit_name.name if user.unit_name else None,
         },
+        "registration_year": registration_year,
+        "cycle_status": cycle.status if cycle else None,
+        "path_type": cycle.path_type if cycle else None,
         "officials": officials_dict,
         "councilors": councilors_list,
         "members": members_list,

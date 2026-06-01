@@ -288,3 +288,17 @@ def require_role(*roles: str):
         return payload
 
     return dependency
+
+
+async def get_admin_or_blood_bank_user(
+    current_user=Depends(get_current_user),
+):
+    """Allow admins and dedicated blood bank users."""
+    from app.auth.models import UserType
+
+    if current_user.user_type not in (UserType.ADMIN, UserType.BLOOD_BANK):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Admin or Blood Bank privileges required.",
+        )
+    return current_user

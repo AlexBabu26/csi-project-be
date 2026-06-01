@@ -1,18 +1,28 @@
 """Admin user management router - password resets and user administration."""
 
+import base64
+import asyncio
+import secrets
+import string
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash
+from app.common.exporter import create_password_reset_credentials_excel
 from app.auth.models import CustomUser, UserType, ClergyDistrict, UnitName
 
 
 router = APIRouter()
+
+# Bcrypt is CPU-heavy; hash in parallel for bulk unit password resets.
+_PASSWORD_HASH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="pwd_hash")
 
 
 # ============ SCHEMAS ============
@@ -23,6 +33,7 @@ class UserListItem(BaseModel):
     username: str
     email: str
     phone_number: Optional[str] = None
+    first_name: Optional[str] = None
     user_type: str
     is_active: bool
     unit_name: Optional[str] = None
@@ -58,6 +69,103 @@ class BulkPasswordResetResponse(BaseModel):
     total_reset: int
     reset_users: List[dict]
     failed_users: List[dict]
+    spreadsheet_filename: Optional[str] = None
+    spreadsheet_base64: Optional[str] = None
+
+
+def _generate_unique_password(length: int = 10) -> str:
+    """Generate a random password for a single user account."""
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+async def _hash_passwords_parallel(plaintexts: List[str]) -> List[str]:
+    """Hash many passwords concurrently to avoid bulk-reset timeouts."""
+    loop = asyncio.get_running_loop()
+    return list(await asyncio.gather(*(
+        loop.run_in_executor(_PASSWORD_HASH_EXECUTOR, get_password_hash, plain)
+        for plain in plaintexts
+    )))
+
+
+def _build_reset_user_entry(user: CustomUser, new_password: Optional[str] = None) -> dict:
+    """Build export-friendly user details for password reset spreadsheets."""
+    district_name = None
+    unit_name = None
+
+    if user.unit_name:
+        unit_name = user.unit_name.name
+        if user.unit_name.district:
+            district_name = user.unit_name.district.name
+    elif user.clergy_district:
+        district_name = user.clergy_district.name
+
+    entry = {
+        "user_id": user.id,
+        "username": user.username,
+        "user_type": user.user_type.name,
+        "unit_name": unit_name,
+        "district_name": district_name,
+        "phone_number": user.phone_number,
+        "display_name": user.first_name,
+    }
+    if new_password is not None:
+        entry["new_password"] = new_password
+    return entry
+
+
+def _strip_passwords_from_reset_users(reset_users: List[dict]) -> List[dict]:
+    """Remove plaintext passwords before returning API response."""
+    return [{key: value for key, value in user.items() if key != "new_password"} for user in reset_users]
+
+
+async def _fetch_users_for_reset(
+    db: AsyncSession,
+    user_ids: Optional[List[int]] = None,
+    target_type: Optional[UserType] = None,
+    district_id: Optional[int] = None,
+) -> List[CustomUser]:
+    """Load users with unit/district relationships for password reset."""
+    stmt = select(CustomUser).options(
+        selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+        selectinload(CustomUser.clergy_district),
+    )
+
+    if user_ids is not None:
+        stmt = stmt.where(CustomUser.id.in_(user_ids))
+    elif target_type is not None:
+        stmt = stmt.where(CustomUser.user_type == target_type)
+        if district_id:
+            if target_type == UserType.UNIT:
+                stmt = stmt.join(UnitName, CustomUser.unit_name_id == UnitName.id).where(
+                    UnitName.clergy_district_id == district_id
+                )
+            else:
+                stmt = stmt.where(CustomUser.clergy_district_id == district_id)
+
+    result = await db.execute(stmt)
+    return list(result.scalars().unique().all())
+
+
+def _attach_spreadsheet_export(
+    response: BulkPasswordResetResponse,
+    reset_users: List[dict],
+    export_label: str,
+    fallback_password: Optional[str] = None,
+) -> BulkPasswordResetResponse:
+    """Attach a base64-encoded Excel spreadsheet to a reset response."""
+    if not reset_users:
+        return response
+
+    excel_file = create_password_reset_credentials_excel(
+        reset_users,
+        fallback_password or "",
+        export_label,
+    )
+    filename = f"{export_label.lower().replace(' ', '-')}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.xlsx"
+    response.spreadsheet_filename = filename
+    response.spreadsheet_base64 = base64.b64encode(excel_file.getvalue()).decode("ascii")
+    return response
 
 
 class DistrictOfficialCreateRequest(BaseModel):
@@ -75,6 +183,31 @@ class DistrictOfficialResponse(BaseModel):
     username: str
     district_name: str
     default_password_hint: str
+
+
+class BloodBankUserCreateRequest(BaseModel):
+    """Schema for creating a dedicated blood bank user."""
+    username: str = Field(..., min_length=2, max_length=150)
+    email: EmailStr
+    first_name: Optional[str] = Field(None, max_length=150)
+    phone_number: Optional[str] = Field(None, min_length=10, max_length=20)
+    password: str = Field(..., min_length=6, max_length=128)
+
+
+class BloodBankUserUpdateRequest(BaseModel):
+    """Schema for updating a blood bank user."""
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = Field(None, max_length=150)
+    phone_number: Optional[str] = Field(None, min_length=10, max_length=20)
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=6, max_length=128)
+
+
+class BloodBankUserResponse(BaseModel):
+    """Response schema for blood bank user operations."""
+    message: str
+    user_id: int
+    username: str
 
 
 # ============ DEPENDENCIES ============
@@ -108,24 +241,28 @@ async def list_users(
     User types:
     - UNIT (2): Unit officials login users
     - DISTRICT_OFFICIAL (3): Conference/Kalamela officials
+    - BLOOD_BANK (4): Dedicated blood bank search users
     """
     stmt = select(CustomUser).options(
         selectinload(CustomUser.unit_name).selectinload(UnitName.district),
         selectinload(CustomUser.clergy_district)
     )
     
+    non_admin_types = [UserType.UNIT, UserType.DISTRICT_OFFICIAL, UserType.BLOOD_BANK]
+
     # Filter by user type (exclude ADMIN users from the list)
     if user_type:
-        if user_type.upper() == "UNIT":
+        type_upper = user_type.upper()
+        if type_upper == "UNIT":
             stmt = stmt.where(CustomUser.user_type == UserType.UNIT)
-        elif user_type.upper() == "DISTRICT_OFFICIAL":
+        elif type_upper == "DISTRICT_OFFICIAL":
             stmt = stmt.where(CustomUser.user_type == UserType.DISTRICT_OFFICIAL)
+        elif type_upper == "BLOOD_BANK":
+            stmt = stmt.where(CustomUser.user_type == UserType.BLOOD_BANK)
         else:
-            # Return both UNIT and DISTRICT_OFFICIAL if invalid type specified
-            stmt = stmt.where(CustomUser.user_type.in_([UserType.UNIT, UserType.DISTRICT_OFFICIAL]))
+            stmt = stmt.where(CustomUser.user_type.in_(non_admin_types))
     else:
-        # By default, exclude ADMIN users
-        stmt = stmt.where(CustomUser.user_type.in_([UserType.UNIT, UserType.DISTRICT_OFFICIAL]))
+        stmt = stmt.where(CustomUser.user_type.in_(non_admin_types))
     
     # Filter by district
     if district_id:
@@ -160,6 +297,7 @@ async def list_users(
             username=user.username,
             email=user.email,
             phone_number=user.phone_number,
+            first_name=user.first_name,
             user_type=user.user_type.name,
             is_active=user.is_active,
             unit_name=user.unit_name.name if user.unit_name else None,
@@ -183,7 +321,7 @@ async def get_users_summary(
         CustomUser.user_type,
         func.count(CustomUser.id).label('count')
     ).where(
-        CustomUser.user_type.in_([UserType.UNIT, UserType.DISTRICT_OFFICIAL])
+        CustomUser.user_type.in_([UserType.UNIT, UserType.DISTRICT_OFFICIAL, UserType.BLOOD_BANK])
     ).group_by(CustomUser.user_type)
     
     result = await db.execute(stmt)
@@ -192,6 +330,7 @@ async def get_users_summary(
     return {
         "unit_officials": counts.get("UNIT", 0),
         "district_officials": counts.get("DISTRICT_OFFICIAL", 0),
+        "blood_bank_users": counts.get("BLOOD_BANK", 0),
         "total": sum(counts.values()),
     }
 
@@ -251,9 +390,7 @@ async def bulk_reset_passwords(
     Only allows resetting passwords for UNIT and DISTRICT_OFFICIAL users.
     """
     # Fetch all requested users
-    stmt = select(CustomUser).where(CustomUser.id.in_(data.user_ids))
-    result = await db.execute(stmt)
-    users = list(result.scalars().all())
+    users = await _fetch_users_for_reset(db, user_ids=data.user_ids)
     
     # Track results
     reset_users = []
@@ -283,11 +420,7 @@ async def bulk_reset_passwords(
         
         # Reset password
         user.hashed_password = hashed_password
-        reset_users.append({
-            "user_id": user.id,
-            "username": user.username,
-            "user_type": user.user_type.name,
-        })
+        reset_users.append(_build_reset_user_entry(user))
     
     await db.commit()
     
@@ -303,8 +436,10 @@ async def bulk_reset_passwords(
 @router.post("/reset-all-by-type", response_model=BulkPasswordResetResponse)
 async def reset_all_passwords_by_type(
     user_type: str = Query(..., description="User type: UNIT or DISTRICT_OFFICIAL"),
-    new_password: str = Query(..., min_length=6, max_length=128),
+    new_password: Optional[str] = Query(None, min_length=6, max_length=128),
     district_id: Optional[int] = Query(None, description="Optional: limit to specific district"),
+    export_spreadsheet: bool = Query(False, description="Include Excel spreadsheet in response"),
+    unique_passwords: bool = Query(False, description="Generate a unique password per user (UNIT reset-all)"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -322,54 +457,77 @@ async def reset_all_passwords_by_type(
         target_type = UserType.UNIT
     elif user_type.upper() == "DISTRICT_OFFICIAL":
         target_type = UserType.DISTRICT_OFFICIAL
+    elif user_type.upper() == "BLOOD_BANK":
+        target_type = UserType.BLOOD_BANK
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user_type. Must be UNIT or DISTRICT_OFFICIAL"
+            detail="Invalid user_type. Must be UNIT, DISTRICT_OFFICIAL, or BLOOD_BANK"
         )
     
     # Build query
-    stmt = select(CustomUser).where(CustomUser.user_type == target_type)
-    
-    # Optionally filter by district
-    if district_id:
-        if target_type == UserType.UNIT:
-            stmt = stmt.join(UnitName, CustomUser.unit_name_id == UnitName.id).where(
-                UnitName.clergy_district_id == district_id
-            )
-        else:
-            stmt = stmt.where(CustomUser.clergy_district_id == district_id)
-    
-    result = await db.execute(stmt)
-    users = list(result.scalars().all())
+    users = await _fetch_users_for_reset(
+        db,
+        target_type=target_type,
+        district_id=district_id,
+    )
     
     if not users:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No users found for type {user_type}"
         )
-    
-    # Reset all passwords
-    hashed_password = get_password_hash(new_password)
+
+    use_unique_passwords = unique_passwords and target_type == UserType.UNIT
+    if not use_unique_passwords and not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="new_password is required unless unique_passwords is enabled for UNIT users",
+        )
+
     reset_users = []
-    
-    for user in users:
-        user.hashed_password = hashed_password
-        reset_users.append({
-            "user_id": user.id,
-            "username": user.username,
-            "user_type": user.user_type.name,
-        })
+
+    if use_unique_passwords:
+        plaintexts = [_generate_unique_password() for _ in users]
+        hashed_passwords = await _hash_passwords_parallel(plaintexts)
+        for user, plain_password, hashed_password in zip(users, plaintexts, hashed_passwords):
+            user.hashed_password = hashed_password
+            reset_users.append(_build_reset_user_entry(user, plain_password))
+    else:
+        hashed_password = get_password_hash(new_password)
+        for user in users:
+            user.hashed_password = hashed_password
+            reset_users.append(_build_reset_user_entry(user, new_password))
     
     await db.commit()
+
+    export_labels = {
+        UserType.UNIT: "Unit Password Reset",
+        UserType.DISTRICT_OFFICIAL: "District Password Reset",
+        UserType.BLOOD_BANK: "Blood Bank Password Reset",
+    }
+    export_label = export_labels.get(target_type, "Password Reset")
+
+    export_rows = reset_users
+    response_reset_users = _strip_passwords_from_reset_users(reset_users)
     
-    return BulkPasswordResetResponse(
+    response = BulkPasswordResetResponse(
         message=f"Password reset completed for all {user_type} users",
         total_requested=len(users),
         total_reset=len(users),
-        reset_users=reset_users,
+        reset_users=response_reset_users,
         failed_users=[],
     )
+
+    if export_spreadsheet:
+        response = _attach_spreadsheet_export(
+            response,
+            export_rows,
+            export_label,
+            fallback_password=new_password,
+        )
+
+    return response
 
 
 # ============ DISTRICT OFFICIAL MANAGEMENT ENDPOINTS ============
@@ -532,4 +690,103 @@ async def list_districts_for_officials(
         for district in districts
     ]
 
+
+# ============ BLOOD BANK USER MANAGEMENT ENDPOINTS ============
+
+@router.post("/blood-bank-users", response_model=BloodBankUserResponse)
+async def create_blood_bank_user(
+    data: BloodBankUserCreateRequest,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a dedicated blood bank user with access to Blood Donor Search only."""
+    stmt = select(CustomUser).where(CustomUser.username == data.username)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already in use")
+
+    stmt = select(CustomUser).where(CustomUser.email == data.email)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+
+    if data.phone_number:
+        stmt = select(CustomUser).where(CustomUser.phone_number == data.phone_number)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone number already in use")
+
+    user = CustomUser(
+        username=data.username,
+        email=data.email,
+        first_name=data.first_name,
+        phone_number=data.phone_number,
+        user_type=UserType.BLOOD_BANK,
+        hashed_password=get_password_hash(data.password),
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return BloodBankUserResponse(
+        message="Blood bank user created successfully",
+        user_id=user.id,
+        username=user.username,
+    )
+
+
+@router.put("/blood-bank-users/{user_id}", response_model=BloodBankUserResponse)
+async def update_blood_bank_user(
+    user_id: int,
+    data: BloodBankUserUpdateRequest,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update a blood bank user (profile fields, active status, and optional password)."""
+    stmt = select(CustomUser).where(
+        and_(CustomUser.id == user_id, CustomUser.user_type == UserType.BLOOD_BANK)
+    )
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blood bank user not found")
+
+    if data.email is not None and data.email != user.email:
+        stmt = select(CustomUser).where(
+            and_(CustomUser.email == data.email, CustomUser.id != user_id)
+        )
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+        user.email = data.email
+
+    if data.first_name is not None:
+        user.first_name = data.first_name
+
+    if data.phone_number is not None:
+        if data.phone_number != user.phone_number:
+            stmt = select(CustomUser).where(
+                CustomUser.phone_number == data.phone_number,
+                CustomUser.id != user_id,
+            )
+            result = await db.execute(stmt)
+            if result.scalar_one_or_none():
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone number already in use")
+        user.phone_number = data.phone_number
+
+    if data.is_active is not None:
+        user.is_active = data.is_active
+
+    if data.password:
+        user.hashed_password = get_password_hash(data.password)
+
+    await db.commit()
+    await db.refresh(user)
+
+    return BloodBankUserResponse(
+        message="Blood bank user updated successfully",
+        user_id=user.id,
+        username=user.username,
+    )
 

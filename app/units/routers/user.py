@@ -1,5 +1,6 @@
 """Units user router - endpoints for registered unit users."""
 
+from datetime import datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import select, and_
@@ -8,15 +9,19 @@ from sqlalchemy.orm import selectinload
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user
+from app.common.storage import save_upload_file, get_file_url
 from app.auth.models import (
+    ClergyDistrict,
     CustomUser,
     UnitDetails,
     UnitMembers,
     UnitOfficials,
     UnitCouncilor,
-    UnitRegistrationData,
+    UnitName,
     UserType,
 )
+from app.admin.models import SiteSettings
+from app.admin.routers.site import get_public_file_url
 from app.units.models import (
     ArchivedUnitMember,
     UnitTransferRequest,
@@ -24,7 +29,11 @@ from app.units.models import (
     UnitOfficialsChangeRequest,
     UnitCouncilorChangeRequest,
     UnitMemberAddRequest,
+    UnitRegistrationCycle,
+    UnitRegistrationPayment,
+    PaymentProofStatus,
 )
+from app.units import registration_cycle_service as cycle_service
 from app.units.schemas import (
     UnitDetailsCreate,
     UnitDetailsResponse,
@@ -53,6 +62,24 @@ from app.units import service as units_service
 router = APIRouter()
 
 
+def _serialize_or_none(schema_cls, obj):
+    if obj is None:
+        return None
+    return schema_cls.model_validate(obj).model_dump(mode="json")
+
+
+def _serialize_list(schema_cls, objs):
+    return [schema_cls.model_validate(obj).model_dump(mode="json") for obj in objs]
+
+
+async def _get_unit_registration_fees(db: AsyncSession) -> tuple[int, int]:
+    result = await db.execute(select(SiteSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    unit_fee = settings.unit_registration_fee if settings and settings.unit_registration_fee is not None else 100
+    member_fee = settings.unit_member_fee if settings and settings.unit_member_fee is not None else 10
+    return unit_fee, member_fee
+
+
 async def get_current_unit_user(
     current_user: CustomUser = Depends(get_current_user),
 ) -> CustomUser:
@@ -65,18 +92,32 @@ async def get_current_unit_user(
     return current_user
 
 
+async def _get_wizard_cycle(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    require_in_progress: bool = True,
+) -> UnitRegistrationCycle:
+    cycle = await cycle_service.get_or_create_current_cycle(db, user_id)
+    if cycle is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is currently closed for this year.",
+        )
+    if require_in_progress:
+        cycle_service.require_cycle_in_progress(cycle)
+    return cycle
+
+
 @router.get("/application-form", response_model=dict)
 async def get_application_form(
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Get application form data with current registration status."""
-    # Get registration data
-    stmt = select(UnitRegistrationData).where(
-        UnitRegistrationData.registered_user_id == current_user.id
+    cycle, registration_enabled, has_any_completed_cycle = await cycle_service.resolve_active_cycle(
+        db, current_user.id
     )
-    result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
     
     # Get unit details
     stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
@@ -100,8 +141,9 @@ async def get_application_form(
     
     # Calculate counts and amounts
     member_count = len(unit_members)
-    members_amount = member_count * 10
-    total_amount = members_amount + 100
+    unit_registration_fee, unit_member_fee = await _get_unit_registration_fees(db)
+    members_amount = member_count * unit_member_fee
+    total_amount = members_amount + unit_registration_fee
     
     # Calculate councilor fields needed
     number_of_fields = 0
@@ -115,22 +157,57 @@ async def get_application_form(
         number_of_fields = 4
     else:
         number_of_fields = 5
+
+    unit_name_str = None
+    if current_user.unit_name_id:
+        unit_name_result = await db.execute(
+            select(UnitName).where(UnitName.id == current_user.unit_name_id)
+        )
+        unit_name_obj = unit_name_result.scalar_one_or_none()
+        unit_name_str = unit_name_obj.name if unit_name_obj else None
+
+    clergy_district_name = None
+    if current_user.clergy_district_id:
+        district_result = await db.execute(
+            select(ClergyDistrict).where(ClergyDistrict.id == current_user.clergy_district_id)
+        )
+        district = district_result.scalar_one_or_none()
+        clergy_district_name = district.name if district else None
+
+    registration_status = cycle.status if cycle else "Not Started"
+    registration_year = cycle.registration_year if cycle else await cycle_service.get_current_registration_year(db)
+    path_type = cycle.path_type if cycle else "fresh"
+    is_renewal = path_type == "renewal"
+    cycle_id = cycle.id if cycle else None
+
+    unit_details_payload = _serialize_or_none(UnitDetailsResponse, unit_details)
+    if unit_details_payload is not None:
+        unit_details_payload["registration_year"] = registration_year
     
     return {
         "user_data": {
             "id": current_user.id,
             "username": current_user.username,
             "email": current_user.email,
-            "unit_name": current_user.unit_name.name if current_user.unit_name else None,
+            "unit_name": unit_name_str,
+            "clergy_district_name": clergy_district_name,
         },
-        "registration_status": registration_data.status if registration_data else "Not Started",
-        "unit_details": unit_details,
-        "unit_officials": unit_officials,
-        "unit_members": unit_members,
-        "unit_councilors": unit_councilors,
+        "registration_status": registration_status,
+        "registration_year": registration_year,
+        "path_type": path_type,
+        "is_renewal": is_renewal,
+        "cycle_id": cycle_id,
+        "registration_enabled": registration_enabled,
+        "has_any_completed_cycle": has_any_completed_cycle,
+        "unit_details": unit_details_payload,
+        "unit_officials": _serialize_or_none(UnitOfficialsResponse, unit_officials),
+        "unit_members": _serialize_list(UnitMemberResponse, unit_members),
+        "unit_councilors": _serialize_list(UnitCouncilorResponse, unit_councilors),
         "member_count": member_count,
         "councilor_count": len(unit_councilors),
         "number_of_councilor_fields": number_of_fields,
+        "unit_registration_fee": unit_registration_fee,
+        "unit_member_fee": unit_member_fee,
         "members_amount": members_amount,
         "total_amount": total_amount,
     }
@@ -143,6 +220,9 @@ async def save_unit_details(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Save unit details and president information."""
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    current_year = await cycle_service.get_current_registration_year(db)
+
     # Create or get unit details
     stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
     result = await db.execute(stmt)
@@ -151,9 +231,11 @@ async def save_unit_details(
     if not unit_details:
         unit_details = UnitDetails(
             registered_user_id=current_user.id,
-            registration_year=2025,
+            registration_year=current_year,
         )
         db.add(unit_details)
+    else:
+        unit_details.registration_year = current_year
     
     # Create or update officials with president info
     stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
@@ -168,13 +250,7 @@ async def save_unit_details(
     unit_officials.president_name = data.president_name.upper()
     unit_officials.president_phone = data.president_phone
     
-    # Update registration status
-    stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
-    
-    if registration_data:
-        registration_data.status = "Unit Details"
+    cycle.status = "Unit Details"
     
     await db.commit()
     
@@ -188,6 +264,8 @@ async def add_unit_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit member."""
+    await _get_wizard_cycle(db, current_user.id)
+
     # Check for duplicates
     stmt = select(UnitMembers).where(
         and_(
@@ -216,12 +294,18 @@ async def add_unit_member(
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A member with the same name, DOB, and phone number already exists"
-            )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A member with the same name, DOB, and phone number already exists"
+        )
     
+    if data.residence_location is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Living location is required",
+        )
+
     # Create member
     member = UnitMembers(
         registered_user_id=current_user.id,
@@ -231,6 +315,7 @@ async def add_unit_member(
         number=data.number,
         qualification=data.qualification,
         blood_group=data.blood_group,
+        residence_location=data.residence_location,
     )
     
     db.add(member)
@@ -246,13 +331,34 @@ async def submit_unit_members(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Mark members section as complete."""
-    stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id)
+
+    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id)
     result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
-    
-    if registration_data:
-        registration_data.status = "Unit Members Completed"
-        await db.commit()
+    unit_members = list(result.scalars().all())
+
+    if not unit_members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Add at least one member before continuing",
+        )
+
+    missing_location = [member.name for member in unit_members if member.residence_location is None]
+    if missing_location:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Living location is required for all members before continuing",
+        )
+
+    missing_blood_group = [member.name for member in unit_members if not member.blood_group]
+    if missing_blood_group:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Blood group is required for all members before continuing",
+        )
+
+    cycle.status = "Unit Members Completed"
+    await db.commit()
     
     return {"message": "Members section completed successfully"}
 
@@ -264,6 +370,8 @@ async def add_unit_official(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add or update unit officials."""
+    await _get_wizard_cycle(db, current_user.id)
+
     stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
     result = await db.execute(stmt)
     officials = result.scalar_one_or_none()
@@ -314,13 +422,9 @@ async def confirm_unit_officials(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Mark officials section as complete."""
-    stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
-    
-    if registration_data:
-        registration_data.status = "Unit Officials Completed"
-        await db.commit()
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle.status = "Unit Officials Completed"
+    await db.commit()
     
     return {"message": "Officials section completed successfully"}
 
@@ -332,6 +436,8 @@ async def add_unit_councilor(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit councilor."""
+    await _get_wizard_cycle(db, current_user.id)
+
     # Verify member exists
     stmt = select(UnitMembers).where(
         and_(
@@ -383,15 +489,41 @@ async def confirm_unit_councilors(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Mark councilors section as complete."""
-    stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
-    
-    if registration_data:
-        registration_data.status = "Unit Councilors Completed"
-        await db.commit()
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle.status = "Unit Councilors Completed"
+    await db.commit()
     
     return {"message": "Councilors section completed successfully"}
+
+
+@router.delete("/councilors/{councilor_id}", response_model=dict)
+async def delete_unit_councilor(
+    councilor_id: int,
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Remove a unit councilor during registration."""
+    await _get_wizard_cycle(db, current_user.id)
+
+    stmt = select(UnitCouncilor).where(
+        and_(
+            UnitCouncilor.id == councilor_id,
+            UnitCouncilor.registered_user_id == current_user.id,
+        )
+    )
+    result = await db.execute(stmt)
+    councilor = result.scalar_one_or_none()
+
+    if not councilor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Councilor not found",
+        )
+
+    await db.delete(councilor)
+    await db.commit()
+
+    return {"message": "Councilor removed successfully"}
 
 
 @router.post("/declaration", response_model=dict)
@@ -400,13 +532,16 @@ async def complete_declaration(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Complete the declaration and finalize registration."""
-    stmt = select(UnitRegistrationData).where(UnitRegistrationData.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    registration_data = result.scalar_one_or_none()
-    
-    if registration_data:
-        registration_data.status = "Registration Completed"
-        await db.commit()
+    cycle = await _get_wizard_cycle(db, current_user.id)
+
+    member_count_result = await db.execute(
+        select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id)
+    )
+    member_count = len(list(member_count_result.scalars().all()))
+    unit_fee, member_fee = await _get_unit_registration_fees(db)
+    total_fee = unit_fee + (member_count * member_fee)
+
+    await cycle_service.complete_cycle(db, cycle, member_count, total_fee)
     
     return {"message": "Registration completed successfully"}
 
@@ -519,6 +654,8 @@ async def update_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update a unit member."""
+    await _get_wizard_cycle(db, current_user.id)
+
     # Get member
     stmt = select(UnitMembers).where(
         and_(
@@ -548,6 +685,8 @@ async def update_member(
         member.qualification = data.qualification
     if data.blood_group is not None:
         member.blood_group = data.blood_group
+    if data.residence_location is not None:
+        member.residence_location = data.residence_location
     
     await db.commit()
     
@@ -561,6 +700,8 @@ async def delete_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a unit member."""
+    await _get_wizard_cycle(db, current_user.id)
+
     # Get member
     stmt = select(UnitMembers).where(
         and_(
@@ -637,6 +778,8 @@ async def update_councilor(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update a councilor."""
+    await _get_wizard_cycle(db, current_user.id)
+
     # Get councilor
     stmt = select(UnitCouncilor).where(
         and_(
@@ -699,17 +842,138 @@ async def get_finish_registration(
     unit_councilors = list(result.scalars().all())
     
     members_count = len(unit_members)
-    members_amount = members_count * 10
-    total_amount = members_amount + 100
+    unit_registration_fee, unit_member_fee = await _get_unit_registration_fees(db)
+    members_amount = members_count * unit_member_fee
+    total_amount = members_amount + unit_registration_fee
+
+    cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
+    registration_year = (
+        cycle.registration_year
+        if cycle
+        else (unit_details.registration_year if unit_details and unit_details.registration_year else await cycle_service.get_current_registration_year(db))
+    )
+
+    unit_details_payload = _serialize_or_none(UnitDetailsResponse, unit_details)
+    if unit_details_payload is not None:
+        unit_details_payload["registration_year"] = registration_year
     
     return {
-        "unit_details": unit_details,
-        "unit_officials": unit_officials,
-        "unit_members": unit_members,
-        "unit_councilors": unit_councilors,
+        "unit_details": unit_details_payload,
+        "unit_officials": _serialize_or_none(UnitOfficialsResponse, unit_officials),
+        "unit_members": _serialize_list(UnitMemberResponse, unit_members),
+        "unit_councilors": _serialize_list(UnitCouncilorResponse, unit_councilors),
         "councilors_count": len(unit_councilors),
         "members_count": members_count,
+        "unit_registration_fee": unit_registration_fee,
+        "unit_member_fee": unit_member_fee,
         "members_amount": members_amount,
         "total_amount": total_amount,
+        "registration_year": registration_year,
     }
 
+
+# ── Registration Payment endpoints ───────────────────────────────────────────
+
+
+@router.get("/payment", response_model=dict)
+async def get_payment_status(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Return payment proof submissions for the active registration cycle.
+    """
+    cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
+    if cycle is None:
+        return {
+            "overall_status": "not_submitted",
+            "latest_rejection_note": None,
+            "qr_url": None,
+            "registration_year": await cycle_service.get_current_registration_year(db),
+            "submissions": [],
+        }
+
+    payment_data = await cycle_service.get_payment_status_for_cycle(
+        db, current_user.id, cycle.id
+    )
+    payments = payment_data["payments"]
+
+    items = []
+    for p in payments:
+        file_url = get_public_file_url(p.file_path) if p.file_path else None
+        items.append({
+            "id": p.id,
+            "file_url": file_url,
+            "total_amount": p.total_amount,
+            "status": p.status.value,
+            "rejection_note": p.rejection_note,
+            "submitted_at": p.submitted_at.isoformat(),
+            "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
+        })
+
+    site_stmt = select(SiteSettings).limit(1)
+    site_result = await db.execute(site_stmt)
+    site = site_result.scalar_one_or_none()
+    qr_url = get_public_file_url(site.payment_qr_url) if site and site.payment_qr_url else None
+
+    return {
+        "overall_status": payment_data["overall_status"],
+        "latest_rejection_note": payment_data["latest_rejection_note"],
+        "qr_url": qr_url,
+        "registration_year": cycle.registration_year,
+        "submissions": items,
+    }
+
+
+@router.post("/payment", response_model=dict, status_code=201)
+async def submit_payment_proof(
+    file: UploadFile = File(..., description="Payment proof screenshot or PDF (max 5 MB)"),
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Upload a payment proof file for the unit registration fee.
+    Creates a new submission with PENDING status even if a previous one exists
+    (allows partial proofs and re-uploads after rejection).
+    """
+    cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
+    if cycle is None or cycle.status != cycle_service.REGISTRATION_COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration must be completed before submitting payment.",
+        )
+
+    if await cycle_service.cycle_has_approved_payment(db, cycle.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment for this registration year has already been approved.",
+        )
+
+    # Upload file to B2
+    object_key, _ = save_upload_file(file, subdir="units/registration-payments")
+
+    # Calculate total amount for reference
+    unit_fee, member_fee = await _get_unit_registration_fees(db)
+    member_count_result = await db.execute(
+        select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id)
+    )
+    member_count = len(list(member_count_result.scalars().all()))
+    total = unit_fee + (member_count * member_fee)
+
+    payment = UnitRegistrationPayment(
+        registered_user_id=current_user.id,
+        registration_cycle_id=cycle.id,
+        file_path=object_key,
+        total_amount=total,
+        status=PaymentProofStatus.PENDING,
+    )
+    db.add(payment)
+    await db.commit()
+    await db.refresh(payment)
+
+    return {
+        "id": payment.id,
+        "status": payment.status.value,
+        "submitted_at": payment.submitted_at.isoformat(),
+        "message": "Payment proof submitted successfully. Awaiting admin review.",
+    }

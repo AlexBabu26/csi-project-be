@@ -22,6 +22,7 @@ class SiteSettings(Base):
     logo_tertiary_url: Mapped[Optional[str]] = mapped_column(String(500))
     registration_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     registration_closed_message: Mapped[Optional[str]] = mapped_column(String(255))
+    current_registration_year: Mapped[Optional[int]] = mapped_column(Integer, default=2025)
 
     # Member registration DOB limits
     member_min_dob: Mapped[Optional[date]] = mapped_column(Date, default=date(1990, 1, 1))
@@ -30,6 +31,13 @@ class SiteSettings(Base):
     # Blood Donor Search access
     blood_donor_district_access: Mapped[bool] = mapped_column(Boolean, default=False)
     blood_donor_unit_access: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Unit registration pricing (INR)
+    unit_registration_fee: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    unit_member_fee: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+
+    # Payment QR code for unit registration fee collection
+    payment_qr_url: Mapped[Optional[str]] = mapped_column(String(500))
     
     # Contact info
     contact_address: Mapped[Optional[str]] = mapped_column(Text)

@@ -4,7 +4,9 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.auth.models import ResidenceLocation
 
 
 class RequestStatus(str, Enum):
@@ -364,11 +366,23 @@ class UnitMemberBase(BaseModel):
     number: Optional[str] = Field(None, max_length=30)
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[str] = Field(None, max_length=10)
+    residence_location: Optional[ResidenceLocation] = None
 
 
 class UnitMemberCreate(UnitMemberBase):
     """Create schema for unit members."""
-    pass
+
+    @model_validator(mode='after')
+    def require_member_fields(self):
+        if self.residence_location is None:
+            raise ValueError('Living location is required')
+        if not self.blood_group:
+            raise ValueError('Blood group is required')
+        if self.blood_group not in VALID_BLOOD_GROUPS:
+            raise ValueError(
+                f"Invalid blood group. Must be one of: {', '.join(sorted(VALID_BLOOD_GROUPS))}"
+            )
+        return self
 
 
 class UnitMemberUpdate(BaseModel):
@@ -380,6 +394,7 @@ class UnitMemberUpdate(BaseModel):
     number: Optional[str] = Field(None, max_length=30)
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[str] = Field(None, max_length=10)
+    residence_location: Optional[ResidenceLocation] = None
 
 
 class UnitMemberResponse(UnitMemberBase):

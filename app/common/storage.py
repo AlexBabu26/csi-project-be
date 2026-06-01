@@ -177,6 +177,26 @@ def get_file_url(object_key: str, expires_in: int = 3600) -> str:
         ) from e
 
 
+def get_file_bytes(object_key: str | None) -> bytes | None:
+    """Fetch raw file bytes from B2 storage."""
+    if not object_key:
+        return None
+
+    try:
+        s3_client = get_s3_client()
+        response = s3_client.get_object(
+            Bucket=settings.b2_bucket_name,
+            Key=object_key,
+        )
+        return response["Body"].read()
+    except ClientError as e:
+        logger.warning("Failed to fetch file from B2 (%s): %s", object_key, e)
+        return None
+    except Exception as e:
+        logger.warning("Unexpected error fetching file (%s): %s", object_key, e)
+        return None
+
+
 def ensure_dir(path: Path) -> Path:
     """
     Legacy function for local storage compatibility.

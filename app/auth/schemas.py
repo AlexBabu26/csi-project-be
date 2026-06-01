@@ -77,13 +77,15 @@ class ClergyDistrictItem(BaseModel):
 
 
 class UnitRegistrationRequest(BaseModel):
-    email: EmailStr
-    phone_number: str
-    first_name: str
-    last_name: Optional[str] = None
+    phone_number: str = Field(min_length=10, max_length=20)
     unit_name_id: int
     clergy_district_id: int
     password: str = Field(min_length=8)
+
+
+class UsernamePreviewResponse(BaseModel):
+    username_preview: str
+    district_code: str
 
 
 class PasswordResetRequest(BaseModel):

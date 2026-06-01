@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
 from app.common.db import get_async_db
-from app.common.security import get_current_user, get_password_hash
+from app.common.security import get_current_user, get_password_hash, get_admin_or_blood_bank_user
 from app.common.cache import get_cache, set_cache
-from sqlalchemy import func
+from sqlalchemy import func, and_, case, distinct
 from sqlalchemy.orm import selectinload
 from app.auth.models import (
     CustomUser,
@@ -19,6 +19,8 @@ from app.auth.models import (
     UnitMembers,
     UserType,
 )
+from app.units.models import UnitRegistrationCycle
+from app.units import registration_cycle_service as cycle_service
 
 router = APIRouter()
 
@@ -63,8 +65,7 @@ async def get_district_wise_data(
     refresh: bool = Query(False, description="Force refresh cache"),
 ):
     """Get district-wise summary data including units and members count. Cached for 5 minutes."""
-    from sqlalchemy import case, distinct
-    
+
     cache_key = "district_wise_data"
     
     # Check cache unless refresh is requested
@@ -72,6 +73,8 @@ async def get_district_wise_data(
         cached_data = get_cache(cache_key)
         if cached_data is not None:
             return cached_data
+
+    current_year = await cycle_service.get_current_registration_year(db)
     
     # Get all districts with unit counts in a single query
     stmt = select(ClergyDistrict).options(selectinload(ClergyDistrict.units))
@@ -90,17 +93,29 @@ async def get_district_wise_data(
         "female_members": 0,
     } for d in districts}
     
-    # Single query for registered and completed units per district
+    # Registered units and current-season completed units per district
     stmt = select(
         UnitName.clergy_district_id,
         func.count(distinct(CustomUser.id)).label('registered'),
         func.count(distinct(case(
-            (UnitRegistrationData.status == "Registration Completed", CustomUser.id)
+            (
+                and_(
+                    UnitRegistrationCycle.status == cycle_service.REGISTRATION_COMPLETED,
+                    UnitRegistrationCycle.registration_year == current_year,
+                ),
+                CustomUser.id,
+            )
         ))).label('completed')
     ).select_from(CustomUser).join(
         UnitName, CustomUser.unit_name_id == UnitName.id
     ).outerjoin(
         UnitRegistrationData, UnitRegistrationData.registered_user_id == CustomUser.id
+    ).outerjoin(
+        UnitRegistrationCycle,
+        and_(
+            UnitRegistrationCycle.registered_user_id == CustomUser.id,
+            UnitRegistrationCycle.registration_year == current_year,
+        ),
     ).where(
         CustomUser.user_type == UserType.UNIT
     ).group_by(UnitName.clergy_district_id)
@@ -141,7 +156,7 @@ async def get_district_wise_data(
 # District Endpoints
 @router.get("/districts", response_model=List[dict])
 async def list_districts(
-    current_user: CustomUser = Depends(get_admin_user),
+    current_user: CustomUser = Depends(get_admin_or_blood_bank_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all clergy districts."""
@@ -192,7 +207,7 @@ async def create_district(
 @router.get("/unit-names", response_model=List[dict])
 async def list_unit_names(
     district_id: int = None,
-    current_user: CustomUser = Depends(get_admin_user),
+    current_user: CustomUser = Depends(get_admin_or_blood_bank_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all unit names, optionally filtered by district."""

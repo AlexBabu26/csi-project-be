@@ -69,17 +69,27 @@ def register_unit(payload: auth_schema.UnitRegistrationRequest, db: Session = De
 
 @router.get("/districts", response_model=list[auth_schema.ClergyDistrictItem])
 def list_districts(db: Session = Depends(get_db)):
-    """Get list of clergy districts for unit registration."""
+    """Get clergy districts with at least one unregistered unit."""
     service = AuthService(db)
     return service.get_districts()
+
+
+@router.get("/registration-username-preview", response_model=auth_schema.UsernamePreviewResponse)
+def preview_registration_username(
+    clergy_district_id: int,
+    db: Session = Depends(get_db),
+):
+    """Preview the registration username before account creation."""
+    service = AuthService(db)
+    return service.preview_registration_username(clergy_district_id)
 
 
 @router.get("/unit-names", response_model=list[auth_schema.UnitName])
 def list_unit_names(district_id: int | None = None, db: Session = Depends(get_db)):
     """
-    Get list of unit names.
+    Get unit names available for registration.
     
-    Optionally filter by district ID.
+    Optionally filter by district ID. Excludes already registered units.
     """
     service = AuthService(db)
     return service.get_unit_names(district_id)
