@@ -120,14 +120,10 @@ async def get_application_form(
     )
     
     # Get unit details
-    stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_details = result.scalar_one_or_none()
+    unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
     
     # Get officials
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_officials = result.scalar_one_or_none()
+    unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     # Get members
     stmt = select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id).order_by(UnitMembers.name)
@@ -225,9 +221,7 @@ async def save_unit_details(
     current_year = await cycle_service.get_current_registration_year(db)
 
     # Create or get unit details
-    stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_details = result.scalar_one_or_none()
+    unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
     
     if not unit_details:
         unit_details = UnitDetails(
@@ -239,9 +233,7 @@ async def save_unit_details(
         unit_details.registration_year = current_year
     
     # Create or update officials with president info
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_officials = result.scalar_one_or_none()
+    unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     if not unit_officials:
         unit_officials = UnitOfficials(registered_user_id=current_user.id)
@@ -272,9 +264,7 @@ async def confirm_unit_details(
         )
 
     current_year = await cycle_service.get_current_registration_year(db)
-    stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_details = result.scalar_one_or_none()
+    unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
     if unit_details:
         unit_details.registration_year = current_year
 
@@ -400,9 +390,7 @@ async def add_unit_official(
     cycle = await _get_wizard_cycle(db, current_user.id)
     cycle_service.require_fresh_registration_for_direct_edits(cycle)
 
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    officials = result.scalar_one_or_none()
+    officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     if not officials:
         officials = UnitOfficials(registered_user_id=current_user.id)
@@ -751,9 +739,7 @@ async def delete_member(
     member_phone = member.number
     
     # Remove from officials if present
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    officials = result.scalar_one_or_none()
+    officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     if officials:
         if officials.vice_president_name == member_name and officials.vice_president_phone == member_phone:
@@ -855,14 +841,8 @@ async def get_finish_registration(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Get final registration summary."""
-    # Get all data
-    stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_details = result.scalar_one_or_none()
-    
-    stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
-    unit_officials = result.scalar_one_or_none()
+    unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
+    unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     stmt = select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id).order_by(UnitMembers.name)
     result = await db.execute(stmt)

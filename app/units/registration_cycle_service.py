@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.models import SiteSettings
-from app.auth.models import UnitDetails
+from app.auth.models import UnitDetails, UnitOfficials
 from app.units.models import (
     PaymentProofStatus,
     UnitRegistrationCycle,
@@ -54,6 +54,32 @@ async def get_cycle(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_unit_details_for_user(
+    db: AsyncSession,
+    user_id: int,
+) -> Optional[UnitDetails]:
+    """Return the canonical unit_details row (newest id if duplicates exist)."""
+    result = await db.execute(
+        select(UnitDetails)
+        .where(UnitDetails.registered_user_id == user_id)
+        .order_by(UnitDetails.id.desc())
+    )
+    return result.scalars().first()
+
+
+async def get_unit_officials_for_user(
+    db: AsyncSession,
+    user_id: int,
+) -> Optional[UnitOfficials]:
+    """Return the canonical unit_officials row (newest id if duplicates exist)."""
+    result = await db.execute(
+        select(UnitOfficials)
+        .where(UnitOfficials.registered_user_id == user_id)
+        .order_by(UnitOfficials.id.desc())
+    )
+    return result.scalars().first()
 
 
 async def get_latest_completed_cycle(
@@ -214,7 +240,7 @@ async def complete_cycle(
     details_result = await db.execute(
         select(UnitDetails).where(UnitDetails.registered_user_id == cycle.registered_user_id)
     )
-    unit_details = details_result.scalar_one_or_none()
+    unit_details = details_result.scalars().first()
     if unit_details:
         unit_details.registration_year = cycle.registration_year
         unit_details.number_of_unit_members = member_count
