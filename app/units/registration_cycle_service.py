@@ -24,6 +24,9 @@ CHANGE_REQUEST_REQUIRED_MSG = (
 
 MEMBER_PROFILE_FIELDS = ("name", "gender", "dob", "number", "qualification", "blood_group")
 
+# Member fields that may be set inline during renewal registration (missing data only).
+RENEWAL_WIZARD_INLINE_MEMBER_FIELDS = frozenset({"blood_group"})
+
 
 async def get_site_settings(db: AsyncSession) -> Optional[SiteSettings]:
     result = await db.execute(select(SiteSettings).limit(1))
@@ -199,20 +202,23 @@ def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) ->
 
 
 def validate_renewal_member_update(cycle: UnitRegistrationCycle, data) -> None:
-    """On renewal, only living-location updates are allowed via the wizard."""
+    """On renewal, only living-location and blood-group gaps can be filled via the wizard."""
     require_cycle_in_progress(cycle)
     if cycle.path_type != "renewal":
         return
 
     changed_profile_fields = [
-        field for field in MEMBER_PROFILE_FIELDS if getattr(data, field, None) is not None
+        field
+        for field in MEMBER_PROFILE_FIELDS
+        if field not in RENEWAL_WIZARD_INLINE_MEMBER_FIELDS
+        and getattr(data, field, None) is not None
     ]
     if changed_profile_fields:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Member profile changes during renewal must use a Member Info Change request. "
-                "Only living location can be updated here."
+                "Only living location and blood group can be updated here."
             ),
         )
 
