@@ -221,6 +221,7 @@ async def save_unit_details(
 ):
     """Save unit details and president information."""
     cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle_service.require_fresh_registration_for_direct_edits(cycle)
     current_year = await cycle_service.get_current_registration_year(db)
 
     # Create or get unit details
@@ -255,6 +256,32 @@ async def save_unit_details(
     await db.commit()
     
     return {"message": "Unit details saved successfully"}
+
+
+@router.post("/details/confirm", response_model=dict)
+async def confirm_unit_details(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Confirm unit details step during renewal without modifying stored data."""
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    if cycle.path_type != "renewal":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Details confirmation is only used for renewal registrations.",
+        )
+
+    current_year = await cycle_service.get_current_registration_year(db)
+    stmt = select(UnitDetails).where(UnitDetails.registered_user_id == current_user.id)
+    result = await db.execute(stmt)
+    unit_details = result.scalar_one_or_none()
+    if unit_details:
+        unit_details.registration_year = current_year
+
+    cycle.status = "Unit Details"
+    await db.commit()
+
+    return {"message": "Unit details confirmed successfully"}
 
 
 @router.post("/members", response_model=dict)
@@ -370,7 +397,8 @@ async def add_unit_official(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add or update unit officials."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle_service.require_fresh_registration_for_direct_edits(cycle)
 
     stmt = select(UnitOfficials).where(UnitOfficials.registered_user_id == current_user.id)
     result = await db.execute(stmt)
@@ -654,7 +682,8 @@ async def update_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update a unit member."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle_service.validate_renewal_member_update(cycle, data)
 
     # Get member
     stmt = select(UnitMembers).where(
@@ -767,6 +796,8 @@ async def update_officials(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update unit officials."""
+    cycle = await _get_wizard_cycle(db, current_user.id)
+    cycle_service.require_fresh_registration_for_direct_edits(cycle)
     return await add_unit_official(data, current_user, db)
 
 

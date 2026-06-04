@@ -17,6 +17,13 @@ from app.units.models import (
 
 REGISTRATION_COMPLETED = "Registration Completed"
 
+CHANGE_REQUEST_REQUIRED_MSG = (
+    "This update must be submitted as a change request. "
+    "Use the request forms under My Requests."
+)
+
+MEMBER_PROFILE_FIELDS = ("name", "gender", "dob", "number", "qualification", "blood_group")
+
 
 async def get_site_settings(db: AsyncSession) -> Optional[SiteSettings]:
     result = await db.execute(select(SiteSettings).limit(1))
@@ -152,6 +159,35 @@ def require_cycle_in_progress(cycle: UnitRegistrationCycle) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration for this year is complete. Use change request workflows for updates.",
+        )
+
+
+def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) -> None:
+    """Block wizard edits on renewal that must go through change-request workflows."""
+    require_cycle_in_progress(cycle)
+    if cycle.path_type == "renewal":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=CHANGE_REQUEST_REQUIRED_MSG,
+        )
+
+
+def validate_renewal_member_update(cycle: UnitRegistrationCycle, data) -> None:
+    """On renewal, only living-location updates are allowed via the wizard."""
+    require_cycle_in_progress(cycle)
+    if cycle.path_type != "renewal":
+        return
+
+    changed_profile_fields = [
+        field for field in MEMBER_PROFILE_FIELDS if getattr(data, field, None) is not None
+    ]
+    if changed_profile_fields:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Member profile changes during renewal must use a Member Info Change request. "
+                "Only living location can be updated here."
+            ),
         )
 
 
