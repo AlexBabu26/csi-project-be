@@ -127,6 +127,15 @@ class UnitTransferRequestUpdate(BaseModel):
     status: RequestStatus
 
 
+class TransferDestinationUnitResponse(BaseModel):
+    """Registered unit available as a transfer destination."""
+
+    id: int
+    name: str
+    clergy_district: str
+    unit_number: str
+
+
 class UnitTransferRequestResponse(BaseModel):
     """Response schema for unit transfer requests."""
     

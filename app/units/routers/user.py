@@ -48,6 +48,7 @@ from app.units.schemas import (
     StatusUpdate,
     UnitTransferRequestCreate,
     UnitTransferRequestResponse,
+    TransferDestinationUnitResponse,
     UnitMemberChangeRequestCreate,
     UnitMemberChangeRequestResponse,
     UnitOfficialsChangeRequestCreate,
@@ -678,6 +679,15 @@ async def get_my_requests_by_unit_id(
             detail="Cannot view requests for another unit",
         )
     return await units_service.get_unit_my_requests(db, current_user.id)
+
+
+@router.get("/transfer-destinations", response_model=List[TransferDestinationUnitResponse])
+async def list_transfer_destinations(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List registered units available as transfer destinations."""
+    return await units_service.get_transfer_destination_units(db, current_user.id)
 
 
 @router.post("/transfer-request", response_model=UnitTransferRequestResponse)

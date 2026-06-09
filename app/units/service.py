@@ -15,6 +15,7 @@ from app.auth.models import (
     UnitCouncilor,
     UnitRegistrationData,
     UnitName,
+    UserType,
 )
 from app.units.models import (
     ArchivedUnitMember,
@@ -38,6 +39,57 @@ from app.units.schemas import (
 
 
 # Unit Transfer Request Functions
+async def get_transfer_destination_units(
+    db: AsyncSession,
+    user_id: int,
+) -> List[Dict[str, Any]]:
+    """List registered units that can receive a member transfer."""
+    current_user_result = await db.execute(
+        select(CustomUser).where(CustomUser.id == user_id)
+    )
+    current_user = current_user_result.scalar_one_or_none()
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    stmt = (
+        select(CustomUser)
+        .where(
+            CustomUser.user_type == UserType.UNIT,
+            CustomUser.is_active.is_(True),
+            CustomUser.unit_name_id.isnot(None),
+            CustomUser.id != user_id,
+        )
+        .options(
+            selectinload(CustomUser.unit_name).selectinload(UnitName.district)
+        )
+        .order_by(CustomUser.username)
+    )
+    result = await db.execute(stmt)
+    users = list(result.scalars().all())
+
+    destinations: List[Dict[str, Any]] = []
+    for user in users:
+        if not user.unit_name_id or not user.unit_name:
+            continue
+        if current_user.unit_name_id and user.unit_name_id == current_user.unit_name_id:
+            continue
+        destinations.append(
+            {
+                "id": user.unit_name_id,
+                "name": user.unit_name.name,
+                "clergy_district": user.unit_name.district.name
+                if user.unit_name.district
+                else "Unknown",
+                "unit_number": user.username,
+            }
+        )
+
+    return destinations
+
+
 async def create_unit_transfer_request(
     db: AsyncSession,
     user_id: int,
