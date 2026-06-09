@@ -116,6 +116,8 @@ class UnitTransferRequestCreate(UnitTransferRequestBase):
     @classmethod
     def validate_proof_extension(cls, v: str) -> str:
         """Validate that proof has allowed extension."""
+        if not v:
+            raise ValueError("Proof document is required")
         if not any(v.lower().endswith(f".{ext.value}") for ext in FileExtension):
             raise ValueError(f"File must have one of these extensions: {', '.join(e.value for e in FileExtension)}")
         return v

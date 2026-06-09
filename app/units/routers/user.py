@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -673,7 +673,7 @@ async def get_my_requests_by_unit_id(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Aggregate all request types (legacy path with unit id)."""
-    if unit_id != current_user.id:
+    if unit_id != current_user.unit_name_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot view requests for another unit",
@@ -692,11 +692,28 @@ async def list_transfer_destinations(
 
 @router.post("/transfer-request", response_model=UnitTransferRequestResponse)
 async def create_transfer_request(
-    data: UnitTransferRequestCreate,
+    unit_member_id: int = Form(...),
+    destination_unit_id: int = Form(...),
+    reason: str = Form(...),
+    proof: UploadFile = File(..., description="Proof document (PDF, PNG, JPG — max 5 MB)"),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a unit transfer request."""
+    if not proof.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Proof document is required",
+        )
+
+    proof_path, _ = save_upload_file(proof, subdir="units/transfer-requests")
+
+    data = UnitTransferRequestCreate(
+        unit_member_id=unit_member_id,
+        destination_unit_id=destination_unit_id,
+        reason=reason,
+        proof=proof_path,
+    )
     return await units_service.create_unit_transfer_request(db, current_user.id, data)
 
 
