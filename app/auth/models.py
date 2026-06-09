@@ -21,6 +21,46 @@ class ResidenceLocation(str, enum.Enum):
     OUTSIDE_INDIA = "OUTSIDE_INDIA"
 
 
+class Country(Base):
+    __tablename__ = "country"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    iso_code: Mapped[Optional[str]] = mapped_column(String(3), unique=True, nullable=True)
+
+    states: Mapped[List["State"]] = relationship("State", back_populates="country", cascade="all, delete")
+    cities: Mapped[List["City"]] = relationship("City", back_populates="country", cascade="all, delete")
+
+
+class State(Base):
+    __tablename__ = "state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey("country.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __table_args__ = (UniqueConstraint("country_id", "name", name="uq_state_per_country"),)
+
+    country: Mapped["Country"] = relationship("Country", back_populates="states")
+    cities: Mapped[List["City"]] = relationship("City", back_populates="state")
+    unit_members: Mapped[List["UnitMembers"]] = relationship("UnitMembers", back_populates="residence_state")
+
+
+class City(Base):
+    __tablename__ = "city"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey("country.id"), nullable=False, index=True)
+    state_id: Mapped[Optional[int]] = mapped_column(ForeignKey("state.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __table_args__ = (UniqueConstraint("state_id", "name", name="uq_city_per_state"),)
+
+    country: Mapped["Country"] = relationship("Country", back_populates="cities")
+    state: Mapped[Optional["State"]] = relationship("State", back_populates="cities")
+    unit_members: Mapped[List["UnitMembers"]] = relationship("UnitMembers", back_populates="residence_city")
+
+
 class ClergyDistrict(Base):
     __tablename__ = "clergy_district"
 
@@ -117,8 +157,40 @@ class UnitMembers(Base):
         Enum(ResidenceLocation),
         nullable=True,
     )
+    residence_state_id: Mapped[Optional[int]] = mapped_column(ForeignKey("state.id"), nullable=True, index=True)
+    residence_city_id: Mapped[Optional[int]] = mapped_column(ForeignKey("city.id"), nullable=True, index=True)
 
     registered_user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="unit_members")
+    residence_state: Mapped[Optional["State"]] = relationship("State", back_populates="unit_members")
+    residence_city: Mapped[Optional["City"]] = relationship("City", back_populates="unit_members")
+
+    @property
+    def residence_city_name(self) -> Optional[str]:
+        return self.residence_city.name if self.residence_city else None
+
+    @property
+    def residence_state_name(self) -> Optional[str]:
+        if self.residence_state:
+            return self.residence_state.name
+        if self.residence_city and self.residence_city.state:
+            return self.residence_city.state.name
+        return None
+
+    @property
+    def residence_country_name(self) -> Optional[str]:
+        if self.residence_city and self.residence_city.country:
+            return self.residence_city.country.name
+        if self.residence_state and self.residence_state.country:
+            return self.residence_state.country.name
+        return None
+
+    @property
+    def residence_country_id(self) -> Optional[int]:
+        if self.residence_city and self.residence_city.country:
+            return self.residence_city.country.id
+        if self.residence_state and self.residence_state.country:
+            return self.residence_state.country.id
+        return None
 
     @property
     def age(self) -> int:

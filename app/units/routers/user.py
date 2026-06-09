@@ -11,8 +11,11 @@ from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.common.storage import save_upload_file, get_file_url
 from app.auth.models import (
+    City,
     ClergyDistrict,
     CustomUser,
+    State,
+    ResidenceLocation,
     UnitDetails,
     UnitMembers,
     UnitOfficials,
@@ -63,8 +66,15 @@ from app.units.schemas import (
     ArchivedMemberConcernRequestResponse,
 )
 from app.units import service as units_service
+from app.units import residence_service
 
 router = APIRouter()
+
+_MEMBER_RESIDENCE_OPTIONS = (
+    selectinload(UnitMembers.residence_state).selectinload(State.country),
+    selectinload(UnitMembers.residence_city).selectinload(City.country),
+    selectinload(UnitMembers.residence_city).selectinload(City.state),
+)
 
 
 def _serialize_or_none(schema_cls, obj):
@@ -131,7 +141,12 @@ async def get_application_form(
     unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
     # Get members
-    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id).order_by(UnitMembers.name)
+    stmt = (
+        select(UnitMembers)
+        .options(*_MEMBER_RESIDENCE_OPTIONS)
+        .where(UnitMembers.registered_user_id == current_user.id)
+        .order_by(UnitMembers.name)
+    )
     result = await db.execute(stmt)
     unit_members = list(result.scalars().all())
     
@@ -322,11 +337,12 @@ async def add_unit_member(
             detail="A member with the same name, DOB, and phone number already exists"
         )
     
-    if data.residence_location is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Living location is required",
-        )
+    residence_location, residence_state_id, residence_city_id = await residence_service.apply_residence_fields(
+        db,
+        residence_location=data.residence_location,
+        residence_state_id=data.residence_state_id,
+        residence_city_id=data.residence_city_id,
+    )
 
     # Create member
     member = UnitMembers(
@@ -337,7 +353,9 @@ async def add_unit_member(
         number=data.number,
         qualification=data.qualification,
         blood_group=data.blood_group,
-        residence_location=data.residence_location,
+        residence_location=residence_location,
+        residence_state_id=residence_state_id,
+        residence_city_id=residence_city_id,
     )
     
     db.add(member)
@@ -365,7 +383,15 @@ async def submit_unit_members(
             detail="Add at least one member before continuing",
         )
 
-    missing_location = [member.name for member in unit_members if member.residence_location is None]
+    missing_location = [
+        member.name
+        for member in unit_members
+        if not residence_service.member_residence_is_complete(
+            member.residence_location,
+            member.residence_state_id,
+            member.residence_city_id,
+        )
+    ]
     if missing_location:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -834,7 +860,15 @@ async def update_member(
     if data.blood_group is not None:
         member.blood_group = data.blood_group
     if data.residence_location is not None:
-        member.residence_location = data.residence_location
+        residence_location, residence_state_id, residence_city_id = await residence_service.apply_residence_fields(
+            db,
+            residence_location=data.residence_location,
+            residence_state_id=data.residence_state_id,
+            residence_city_id=data.residence_city_id,
+        )
+        member.residence_location = residence_location
+        member.residence_state_id = residence_state_id
+        member.residence_city_id = residence_city_id
     
     await db.commit()
     
@@ -975,7 +1009,12 @@ async def get_finish_registration(
     unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
     unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
     
-    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id).order_by(UnitMembers.name)
+    stmt = (
+        select(UnitMembers)
+        .options(*_MEMBER_RESIDENCE_OPTIONS)
+        .where(UnitMembers.registered_user_id == current_user.id)
+        .order_by(UnitMembers.name)
+    )
     result = await db.execute(stmt)
     unit_members = list(result.scalars().all())
     

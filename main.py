@@ -10,6 +10,7 @@ from app.conference.routers import official as conference_official, public as co
 from app.admin.routers import units as admin_units, conference as admin_conference, system as admin_system, site as admin_site, users as admin_users
 from app.kalamela.routers import public as kalamela_public, official as kalamela_official, admin as kalamela_admin
 from app.yuvalokham.routers import auth as ym_auth, user as ym_user, admin as ym_admin
+from app.master import router as master_router
 
 
 settings = get_settings()
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(file_router.router, prefix="/api/files", tags=["files"])
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(units_user.router, prefix="/api/units", tags=["units"])
+app.include_router(master_router.router, prefix="/api/master", tags=["master"])
 app.include_router(conference_official.router, prefix="/api/conference/official", tags=["conference-official"])
 app.include_router(conference_public.router, prefix="/api/conference/public", tags=["conference-public"])
 app.include_router(admin_units.router, prefix="/api/admin/units", tags=["admin-units"])

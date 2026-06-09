@@ -435,6 +435,25 @@ class UnitMemberBase(BaseModel):
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[str] = Field(None, max_length=10)
     residence_location: Optional[ResidenceLocation] = None
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
+    residence_state_name: Optional[str] = None
+    residence_city_name: Optional[str] = None
+    residence_country_name: Optional[str] = None
+    residence_country_id: Optional[int] = None
+
+
+def _validate_residence_fields(
+    residence_location: Optional[ResidenceLocation],
+    residence_state_id: Optional[int],
+    residence_city_id: Optional[int],
+) -> None:
+    if residence_location is None:
+        raise ValueError('Living location is required')
+    if residence_location == ResidenceLocation.WITHIN_KERALA:
+        return
+    if not residence_state_id and not residence_city_id:
+        raise ValueError('State is required when the member does not live in Kerala')
 
 
 class UnitMemberCreate(UnitMemberBase):
@@ -442,8 +461,11 @@ class UnitMemberCreate(UnitMemberBase):
 
     @model_validator(mode='after')
     def require_member_fields(self):
-        if self.residence_location is None:
-            raise ValueError('Living location is required')
+        _validate_residence_fields(
+            self.residence_location,
+            self.residence_state_id,
+            self.residence_city_id,
+        )
         if not self.blood_group:
             raise ValueError('Blood group is required')
         if self.blood_group not in VALID_BLOOD_GROUPS:
@@ -463,6 +485,18 @@ class UnitMemberUpdate(BaseModel):
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[str] = Field(None, max_length=10)
     residence_location: Optional[ResidenceLocation] = None
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
+
+    @model_validator(mode='after')
+    def validate_residence_update(self):
+        if self.residence_location is not None:
+            _validate_residence_fields(
+                self.residence_location,
+                self.residence_state_id,
+                self.residence_city_id,
+            )
+        return self
 
 
 class UnitMemberResponse(UnitMemberBase):

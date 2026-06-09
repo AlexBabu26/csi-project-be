@@ -15,7 +15,9 @@ from app.common.storage import save_upload_file
 from app.admin.models import SiteSettings
 from app.admin.routers.site import get_public_file_url, SITE_SETTINGS_CACHE_KEY
 from app.auth.models import (
+    City,
     CustomUser,
+    State,
     UnitMembers,
     UnitOfficials,
     UnitCouncilor,
@@ -738,7 +740,10 @@ async def list_all_unit_members(
     # Get paginated data
     offset = (page - 1) * page_size
     stmt = select(UnitMembers).options(
-        selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
+        selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+        selectinload(UnitMembers.residence_state).selectinload(State.country),
+        selectinload(UnitMembers.residence_city).selectinload(City.country),
+        selectinload(UnitMembers.residence_city).selectinload(City.state),
     ).offset(offset).limit(page_size)
     if filters:
         stmt = stmt.where(*filters)
@@ -759,6 +764,12 @@ async def list_all_unit_members(
             "qualification": member.qualification,
             "blood_group": member.blood_group,
             "residence_location": member.residence_location.value if member.residence_location else None,
+            "residence_state_id": member.residence_state_id,
+            "residence_city_id": member.residence_city_id,
+            "residence_state_name": member.residence_state_name,
+            "residence_city_name": member.residence_city_name,
+            "residence_country_name": member.residence_country_name,
+            "residence_country_id": member.residence_country_id,
         }
         for member in members_list
     ]
