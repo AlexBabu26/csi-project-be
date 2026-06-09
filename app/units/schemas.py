@@ -452,7 +452,7 @@ def _validate_residence_fields(
         raise ValueError('Living location is required')
     if residence_location == ResidenceLocation.WITHIN_KERALA:
         return
-    if not residence_state_id and not residence_city_id:
+    if not residence_state_id:
         raise ValueError('State is required when the member does not live in Kerala')
 
 
