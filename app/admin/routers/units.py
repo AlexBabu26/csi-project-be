@@ -15,9 +15,7 @@ from app.common.storage import save_upload_file
 from app.admin.models import SiteSettings
 from app.admin.routers.site import get_public_file_url, SITE_SETTINGS_CACHE_KEY
 from app.auth.models import (
-    City,
     CustomUser,
-    State,
     UnitMembers,
     UnitOfficials,
     UnitCouncilor,
@@ -61,7 +59,19 @@ from app.kalamela.models import (
     KalamelaExcludeMembers,
 )
 from app.conference.models import ConferenceDelegate
-from app.common.exporter import create_archived_members_csv, create_archived_members_excel
+from app.common.exporter import (
+    create_archived_members_csv,
+    create_archived_members_excel,
+    create_councilors_excel,
+    create_members_excel,
+    create_officials_excel,
+    create_units_excel,
+)
+from app.units.member_serialization import (
+    MEMBER_RESIDENCE_LOAD_OPTIONS,
+    member_export_row,
+    serialize_member,
+)
 
 router = APIRouter()
 
@@ -721,11 +731,14 @@ async def list_all_unit_members(
     db: AsyncSession = Depends(get_async_db),
     page: int = 1,
     page_size: int = 50,
+    unit_id: Optional[int] = Query(None, description="Filter by registered unit user id"),
     residence_location: Optional[ResidenceLocation] = Query(None),
     missing_residence_location: Optional[bool] = Query(None),
 ):
     """List all unit members across all units with pagination."""
     filters = []
+    if unit_id is not None:
+        filters.append(UnitMembers.registered_user_id == unit_id)
     if missing_residence_location:
         filters.append(UnitMembers.residence_location.is_(None))
     elif residence_location is not None:
@@ -741,38 +754,29 @@ async def list_all_unit_members(
     offset = (page - 1) * page_size
     stmt = select(UnitMembers).options(
         selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
-        selectinload(UnitMembers.residence_state).selectinload(State.country),
-        selectinload(UnitMembers.residence_city).selectinload(City.country),
-        selectinload(UnitMembers.residence_city).selectinload(City.state),
+        *MEMBER_RESIDENCE_LOAD_OPTIONS,
     ).offset(offset).limit(page_size)
     if filters:
         stmt = stmt.where(*filters)
     result = await db.execute(stmt)
     members_list = list(result.scalars().all())
     
-    data = [
-        {
-            "id": member.id,
-            "registered_user_id": member.registered_user_id,
-            "unit_name": member.registered_user.unit_name.name if member.registered_user and member.registered_user.unit_name else None,
-            "district": member.registered_user.unit_name.district.name if member.registered_user and member.registered_user.unit_name and member.registered_user.unit_name.district else None,
-            "name": member.name,
-            "gender": member.gender,
-            "dob": member.dob.isoformat() if member.dob else None,
-            "age": member.age,
-            "number": member.number,
-            "qualification": member.qualification,
-            "blood_group": member.blood_group,
-            "residence_location": member.residence_location.value if member.residence_location else None,
-            "residence_state_id": member.residence_state_id,
-            "residence_city_id": member.residence_city_id,
-            "residence_state_name": member.residence_state_name,
-            "residence_city_name": member.residence_city_name,
-            "residence_country_name": member.residence_country_name,
-            "residence_country_id": member.residence_country_id,
-        }
-        for member in members_list
-    ]
+    data = []
+    for member in members_list:
+        row = serialize_member(member)
+        row["unit_name"] = (
+            member.registered_user.unit_name.name
+            if member.registered_user and member.registered_user.unit_name
+            else None
+        )
+        row["district"] = (
+            member.registered_user.unit_name.district.name
+            if member.registered_user
+            and member.registered_user.unit_name
+            and member.registered_user.unit_name.district
+            else None
+        )
+        data.append(row)
     
     return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
@@ -801,8 +805,8 @@ async def archive_preview(
     stmt = (
         select(UnitMembers)
         .options(
-            selectinload(UnitMembers.registered_user)
-            .selectinload(CustomUser.unit_name)
+            selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name),
+            *MEMBER_RESIDENCE_LOAD_OPTIONS,
         )
         .where(
             or_(
@@ -815,24 +819,15 @@ async def archive_preview(
     result = await db.execute(stmt)
     members = list(result.scalars().all())
 
-    data = [
-        {
-            "id": m.id,
-            "name": m.name,
-            "gender": m.gender,
-            "dob": m.dob.isoformat() if m.dob else None,
-            "age": m.age,
-            "number": m.number,
-            "qualification": m.qualification,
-            "blood_group": m.blood_group,
-            "unit_name": (
-                m.registered_user.unit_name.name
-                if m.registered_user and m.registered_user.unit_name else None
-            ),
-            "registered_user_id": m.registered_user_id,
-        }
-        for m in members
-    ]
+    data = []
+    for m in members:
+        row = serialize_member(m)
+        row["unit_name"] = (
+            m.registered_user.unit_name.name
+            if m.registered_user and m.registered_user.unit_name
+            else None
+        )
+        data.append(row)
 
     return {
         "data": data,
@@ -1427,6 +1422,205 @@ async def upload_payment_qr(
 
 
 # Unit Details - MUST be last due to path parameter matching
+async def _load_members_for_export(
+    db: AsyncSession,
+    *,
+    registered_user_id: Optional[int] = None,
+    district_id: Optional[int] = None,
+) -> List[dict]:
+    stmt = select(UnitMembers).options(
+        selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+        *MEMBER_RESIDENCE_LOAD_OPTIONS,
+    )
+    if registered_user_id is not None:
+        stmt = stmt.where(UnitMembers.registered_user_id == registered_user_id)
+    if district_id is not None:
+        stmt = stmt.join(CustomUser, CustomUser.id == UnitMembers.registered_user_id).join(
+            UnitName, UnitName.id == CustomUser.unit_name_id
+        ).where(UnitName.clergy_district_id == district_id)
+    stmt = stmt.order_by(UnitMembers.name)
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+    rows: List[dict] = []
+    for member in members:
+        unit_name = ""
+        district = ""
+        if member.registered_user and member.registered_user.unit_name:
+            unit_name = member.registered_user.unit_name.name or ""
+            if member.registered_user.unit_name.district:
+                district = member.registered_user.unit_name.district.name or ""
+        rows.append(member_export_row(member, unit_name=unit_name, district=district))
+    return rows
+
+
+async def _load_officials_for_export(
+    db: AsyncSession,
+    *,
+    registered_user_id: Optional[int] = None,
+    district_id: Optional[int] = None,
+) -> List[dict]:
+    stmt = select(UnitOfficials).options(
+        selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name)
+    )
+    if registered_user_id is not None:
+        stmt = stmt.where(UnitOfficials.registered_user_id == registered_user_id)
+    if district_id is not None:
+        stmt = stmt.join(CustomUser, CustomUser.id == UnitOfficials.registered_user_id).join(
+            UnitName, UnitName.id == CustomUser.unit_name_id
+        ).where(UnitName.clergy_district_id == district_id)
+    result = await db.execute(stmt)
+    officials = list(result.scalars().all())
+    return [
+        {
+            "unit_name": (
+                official.registered_user.unit_name.name
+                if official.registered_user and official.registered_user.unit_name
+                else ""
+            ),
+            "president_name": official.president_name or "",
+            "president_phone": official.president_phone or "",
+            "vice_president_name": official.vice_president_name or "",
+            "vice_president_phone": official.vice_president_phone or "",
+            "secretary_name": official.secretary_name or "",
+            "secretary_phone": official.secretary_phone or "",
+            "joint_secretary_name": official.joint_secretary_name or "",
+            "joint_secretary_phone": official.joint_secretary_phone or "",
+            "treasurer_name": official.treasurer_name or "",
+            "treasurer_phone": official.treasurer_phone or "",
+        }
+        for official in officials
+    ]
+
+
+async def _load_councilors_for_export(
+    db: AsyncSession,
+    *,
+    registered_user_id: Optional[int] = None,
+    district_id: Optional[int] = None,
+) -> List[dict]:
+    stmt = select(UnitCouncilor).options(
+        selectinload(UnitCouncilor.registered_user).selectinload(CustomUser.unit_name),
+        selectinload(UnitCouncilor.unit_member),
+    )
+    if registered_user_id is not None:
+        stmt = stmt.where(UnitCouncilor.registered_user_id == registered_user_id)
+    if district_id is not None:
+        stmt = stmt.join(CustomUser, CustomUser.id == UnitCouncilor.registered_user_id).join(
+            UnitName, UnitName.id == CustomUser.unit_name_id
+        ).where(UnitName.clergy_district_id == district_id)
+    result = await db.execute(stmt)
+    councilors = list(result.scalars().all())
+    return [
+        {
+            "name": councilor.unit_member.name if councilor.unit_member else "",
+            "number": councilor.unit_member.number if councilor.unit_member else "",
+            "unit_name": (
+                councilor.registered_user.unit_name.name
+                if councilor.registered_user and councilor.registered_user.unit_name
+                else ""
+            ),
+        }
+        for councilor in councilors
+    ]
+
+
+@router.get("/export/{export_type}")
+async def export_unit_data(
+    export_type: str,
+    id: Optional[int] = Query(None, description="Unit user id or district id depending on export type"),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Export unit, member, official, or councilor data to Excel."""
+    export_type = export_type.strip().lower()
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+
+    if export_type == "members":
+        rows = await _load_members_for_export(db)
+        export_file = create_members_excel(rows)
+        filename = f"unit_members_{timestamp}.xlsx"
+    elif export_type == "unit":
+        if id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit id is required")
+        rows = await _load_members_for_export(db, registered_user_id=id)
+        export_file = create_members_excel(rows)
+        filename = f"unit_{id}_members_{timestamp}.xlsx"
+    elif export_type == "officials":
+        rows = await _load_officials_for_export(db)
+        export_file = create_officials_excel(rows)
+        filename = f"unit_officials_{timestamp}.xlsx"
+    elif export_type == "councilors":
+        rows = await _load_councilors_for_export(db)
+        export_file = create_councilors_excel(rows)
+        filename = f"unit_councilors_{timestamp}.xlsx"
+    elif export_type == "district-officials":
+        if id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="District id is required")
+        rows = await _load_officials_for_export(db, district_id=id)
+        export_file = create_officials_excel(rows)
+        filename = f"district_{id}_officials_{timestamp}.xlsx"
+    elif export_type == "district-councilors":
+        if id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="District id is required")
+        rows = await _load_councilors_for_export(db, district_id=id)
+        export_file = create_councilors_excel(rows)
+        filename = f"district_{id}_councilors_{timestamp}.xlsx"
+    elif export_type == "unit-officials":
+        if id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit id is required")
+        rows = await _load_officials_for_export(db, registered_user_id=id)
+        export_file = create_officials_excel(rows)
+        filename = f"unit_{id}_officials_{timestamp}.xlsx"
+    elif export_type == "unit-councilors":
+        if id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit id is required")
+        rows = await _load_councilors_for_export(db, registered_user_id=id)
+        export_file = create_councilors_excel(rows)
+        filename = f"unit_{id}_councilors_{timestamp}.xlsx"
+    elif export_type == "units":
+        units = await list_all_units(current_user=current_user, db=db)
+        district_by_unit: dict[str, str] = {}
+        unit_name_ids = [
+            unit["user_id"]
+            for unit in units
+            if unit.get("user_id")
+        ]
+        if unit_name_ids:
+            user_rows = await db.execute(
+                select(CustomUser.id, UnitName.name, ClergyDistrict.name)
+                .join(UnitName, UnitName.id == CustomUser.unit_name_id)
+                .join(ClergyDistrict, ClergyDistrict.id == UnitName.clergy_district_id)
+                .where(CustomUser.id.in_(unit_name_ids))
+            )
+            for user_id, unit_name, district_name in user_rows.all():
+                district_by_unit[str(user_id)] = district_name or ""
+
+        rows = [
+            {
+                "username": unit.get("username", ""),
+                "unit_name": unit.get("unit_name", ""),
+                "district": district_by_unit.get(str(unit.get("user_id", "")), ""),
+                "member_count": unit.get("member_count", 0),
+                "status": unit.get("status", ""),
+                "payment_status": unit.get("payment_status", ""),
+            }
+            for unit in units
+        ]
+        export_file = create_units_excel(rows)
+        filename = f"units_{timestamp}.xlsx"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported export type: {export_type}",
+        )
+
+    return StreamingResponse(
+        export_file,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{unit_id}", response_model=dict)
 async def view_unit_details(
     unit_id: int,
@@ -1457,7 +1651,12 @@ async def view_unit_details(
     councilors = list(result.scalars().all())
     
     # Get members
-    stmt = select(UnitMembers).where(UnitMembers.registered_user_id == unit_id)
+    stmt = (
+        select(UnitMembers)
+        .options(*MEMBER_RESIDENCE_LOAD_OPTIONS)
+        .where(UnitMembers.registered_user_id == unit_id)
+        .order_by(UnitMembers.name)
+    )
     result = await db.execute(stmt)
     members = list(result.scalars().all())
 
@@ -1496,19 +1695,7 @@ async def view_unit_details(
         for c in councilors
     ]
     
-    # Convert members to list of dicts
-    members_list = [
-        {
-            "id": m.id,
-            "name": m.name,
-            "gender": m.gender,
-            "dob": m.dob.isoformat() if m.dob else None,
-            "number": m.number,
-            "qualification": m.qualification,
-            "blood_group": m.blood_group,
-        }
-        for m in members
-    ]
+    members_list = [serialize_member(m) for m in members]
     
     return {
         "user": {

@@ -156,28 +156,63 @@ def create_members_excel(
         BytesIO object containing the Excel file
     """
     headers = [
+        "District",
+        "Unit Name",
         "Name",
         "Contact",
         "Age",
         "DoB",
+        "Gender",
         "Qualification",
         "Blood Group",
-        "Unit Name",
+        "Living Location",
+        "Country",
+        "State",
+        "City",
     ]
     
     rows = []
     for member in members_data:
         rows.append([
+            member.get("district", ""),
+            member.get("unit_name", ""),
             member.get("name", ""),
             f"+91 {member.get('number', '')}" if member.get('number') else "",
             member.get("age", ""),
             member.get("dob", ""),
+            member.get("gender", ""),
             member.get("qualification", ""),
             member.get("blood_group", ""),
-            member.get("unit_name", ""),
+            member.get("residence_label", ""),
+            member.get("residence_country_name", ""),
+            member.get("residence_state_name", ""),
+            member.get("residence_city_name", ""),
         ])
     
     return create_styled_excel(headers, rows, "Unit Members")
+
+
+def create_units_excel(units_data: List[Dict[str, Any]]) -> BytesIO:
+    """Create Excel file for registered units."""
+    headers = [
+        "Unit Number",
+        "Unit Name",
+        "District",
+        "Member Count",
+        "Registration Status",
+        "Payment Status",
+    ]
+    rows = []
+    for unit in units_data:
+        rows.append([
+            unit.get("username", ""),
+            unit.get("unit_name", ""),
+            unit.get("district", ""),
+            unit.get("member_count", ""),
+            unit.get("status", ""),
+            unit.get("payment_status", ""),
+        ])
+    return create_styled_excel(headers, rows, "Units")
 
 
 ARCHIVED_MEMBER_EXPORT_HEADERS = [

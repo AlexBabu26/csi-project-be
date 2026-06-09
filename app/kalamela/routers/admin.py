@@ -741,10 +741,16 @@ async def view_unit_members(
         )
     
     # Get members
-    stmt = select(UnitMembers).join(
-        CustomUser, UnitMembers.registered_user_id == CustomUser.id
-    ).where(CustomUser.unit_name_id == unit_id).options(
-        selectinload(UnitMembers.registered_user)
+    from app.units.member_serialization import MEMBER_RESIDENCE_LOAD_OPTIONS, serialize_member
+
+    stmt = (
+        select(UnitMembers)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .where(CustomUser.unit_name_id == unit_id)
+        .options(
+            selectinload(UnitMembers.registered_user),
+            *MEMBER_RESIDENCE_LOAD_OPTIONS,
+        )
     )
     result = await db.execute(stmt)
     members = list(result.scalars().all())
@@ -762,17 +768,10 @@ async def view_unit_members(
         if member.dob:
             age = today.year - member.dob.year - ((today.month, today.day) < (member.dob.month, member.dob.day))
         
-        members_with_age.append({
-            "id": member.id,
-            "name": member.name,
-            "gender": member.gender,
-            "dob": member.dob,
-            "number": member.number,
-            "qualification": member.qualification,
-            "blood_group": member.blood_group,
-            "age": age,
-            "is_excluded": member.id in excluded_ids,
-        })
+        member_row = serialize_member(member)
+        member_row["age"] = age
+        member_row["is_excluded"] = member.id in excluded_ids
+        members_with_age.append(member_row)
     
     return members_with_age
 

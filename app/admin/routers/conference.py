@@ -227,22 +227,16 @@ async def view_district_members(
 ):
     """View all members from a district for conference registration."""
     # Get members from the district
-    stmt = select(UnitMembers).join(
-        CustomUser, UnitMembers.registered_user_id == CustomUser.id
-    ).where(
-        CustomUser.unit_name.has(clergy_district_id=district_id)
-    ).order_by(UnitMembers.name)
+    from app.units.member_serialization import MEMBER_RESIDENCE_LOAD_OPTIONS, serialize_member
+
+    stmt = (
+        select(UnitMembers)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .options(*MEMBER_RESIDENCE_LOAD_OPTIONS)
+        .where(CustomUser.unit_name.has(clergy_district_id=district_id))
+        .order_by(UnitMembers.name)
+    )
     result = await db.execute(stmt)
     members = list(result.scalars().all())
-    
-    return [
-        {
-            "id": member.id,
-            "name": member.name,
-            "number": member.number,
-            "gender": member.gender,
-            "dob": member.dob,
-        }
-        for member in members
-    ]
+    return [serialize_member(member) for member in members]
 

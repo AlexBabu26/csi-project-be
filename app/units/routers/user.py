@@ -11,10 +11,8 @@ from app.common.db import get_async_db
 from app.common.security import get_current_user
 from app.common.storage import save_upload_file, get_file_url
 from app.auth.models import (
-    City,
     ClergyDistrict,
     CustomUser,
-    State,
     ResidenceLocation,
     UnitDetails,
     UnitMembers,
@@ -67,14 +65,11 @@ from app.units.schemas import (
 )
 from app.units import service as units_service
 from app.units import residence_service
+from app.units.member_serialization import MEMBER_RESIDENCE_LOAD_OPTIONS
 
 router = APIRouter()
 
-_MEMBER_RESIDENCE_OPTIONS = (
-    selectinload(UnitMembers.residence_state).selectinload(State.country),
-    selectinload(UnitMembers.residence_city).selectinload(City.country),
-    selectinload(UnitMembers.residence_city).selectinload(City.state),
-)
+_MEMBER_RESIDENCE_OPTIONS = MEMBER_RESIDENCE_LOAD_OPTIONS
 
 
 def _serialize_or_none(schema_cls, obj):
