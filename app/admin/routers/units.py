@@ -3,7 +3,8 @@
 from datetime import date, datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, status, Query, UploadFile
-from sqlalchemy import select, func, and_, or_
+from fastapi.responses import StreamingResponse
+from sqlalchemy import delete, select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,6 +32,7 @@ from app.units.models import (
     UnitOfficialsChangeRequest,
     UnitCouncilorChangeRequest,
     UnitMemberAddRequest,
+    ArchivedMemberConcernRequest,
     ArchivedUnitMember,
     RequestStatus,
     UnitRegistrationCycle,
@@ -44,9 +46,20 @@ from app.units.schemas import (
     UnitOfficialsChangeRequestResponse,
     UnitCouncilorChangeRequestResponse,
     UnitMemberAddRequestResponse,
+    ArchivedMemberConcernRequestResponse,
     RequestActionSchema,
 )
 from app.units import service as units_service
+from app.kalamela.models import (
+    Appeal,
+    AppealPayments,
+    GroupEventParticipation,
+    IndividualEventParticipation,
+    IndividualEventScoreCard,
+    KalamelaExcludeMembers,
+)
+from app.conference.models import ConferenceDelegate
+from app.common.exporter import create_archived_members_csv, create_archived_members_excel
 
 router = APIRouter()
 
@@ -178,6 +191,7 @@ async def admin_home_page(
         UnitOfficialsChangeRequest,
         UnitCouncilorChangeRequest,
         UnitMemberAddRequest,
+        ArchivedMemberConcernRequest,
     ):
         req_result = await db.execute(
             select(func.count(model.id)).where(model.status == RequestStatus.PENDING)
@@ -568,6 +582,52 @@ async def reject_member_add_request(
     return await units_service.reject_member_add_request(db, request_id)
 
 
+# Archived Member Concern Request Endpoints
+@router.get("/archived-member-concern-requests")
+async def list_archived_member_concern_requests(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List all archived member concern requests."""
+    return await units_service.get_archived_member_concern_requests(db)
+
+
+@router.put("/archived-member-concern-requests/{request_id}/approve")
+async def approve_archived_member_concern_request(
+    request_id: int,
+    action: RequestActionSchema = None,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Resolve an archived member concern after admin review."""
+    concern = await units_service.approve_archived_member_concern_request(
+        db,
+        request_id,
+        admin_response=action.remarks if action else None,
+    )
+    enriched = await units_service.get_archived_member_concern_requests(db)
+    match = next((item for item in enriched if item["id"] == concern.id), None)
+    return match or concern
+
+
+@router.put("/archived-member-concern-requests/{request_id}/reject")
+async def reject_archived_member_concern_request(
+    request_id: int,
+    action: RequestActionSchema = None,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Reject an archived member concern after admin review."""
+    concern = await units_service.reject_archived_member_concern_request(
+        db,
+        request_id,
+        admin_response=action.remarks if action else None,
+    )
+    enriched = await units_service.get_archived_member_concern_requests(db)
+    match = next((item for item in enriched if item["id"] == concern.id), None)
+    return match or concern
+
+
 # Unit Officials Endpoint with Pagination
 @router.get("/officials", response_model=dict)
 async def list_all_unit_officials(
@@ -773,6 +833,74 @@ async def archive_preview(
 
 # ── Bulk Archive ──────────────────────────────────────────────────────────────
 
+async def _remove_member_dependencies(db: AsyncSession, member_ids: List[int]) -> None:
+    """Remove records that reference unit_members before archive/delete."""
+    if not member_ids:
+        return
+
+    appeal_ids = select(Appeal.id).where(Appeal.added_by_id.in_(member_ids))
+    individual_participation_ids = select(IndividualEventParticipation.id).where(
+        IndividualEventParticipation.participant_id.in_(member_ids)
+    )
+    councilor_ids = select(UnitCouncilor.id).where(
+        UnitCouncilor.unit_member_id.in_(member_ids)
+    )
+
+    await db.execute(
+        delete(AppealPayments).where(AppealPayments.appeal_id.in_(appeal_ids))
+    )
+    await db.execute(delete(Appeal).where(Appeal.added_by_id.in_(member_ids)))
+    await db.execute(
+        delete(IndividualEventScoreCard).where(
+            or_(
+                IndividualEventScoreCard.participant_id.in_(member_ids),
+                IndividualEventScoreCard.event_participation_id.in_(individual_participation_ids),
+            )
+        )
+    )
+    await db.execute(
+        delete(IndividualEventParticipation).where(
+            IndividualEventParticipation.participant_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(GroupEventParticipation).where(
+            GroupEventParticipation.participant_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(KalamelaExcludeMembers).where(
+            KalamelaExcludeMembers.members_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(UnitCouncilorChangeRequest).where(
+            or_(
+                UnitCouncilorChangeRequest.unit_councilor_id.in_(councilor_ids),
+                UnitCouncilorChangeRequest.unit_member_id.in_(member_ids),
+                UnitCouncilorChangeRequest.original_unit_member_id.in_(member_ids),
+            )
+        )
+    )
+    await db.execute(
+        delete(UnitCouncilor).where(UnitCouncilor.unit_member_id.in_(member_ids))
+    )
+    await db.execute(
+        delete(UnitMemberChangeRequest).where(
+            UnitMemberChangeRequest.unit_member_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(UnitTransferRequest).where(
+            UnitTransferRequest.unit_member_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(ConferenceDelegate).where(ConferenceDelegate.members_id.in_(member_ids))
+    )
+    await db.flush()
+
+
 @router.post("/bulk-archive", response_model=dict)
 async def bulk_archive_members(
     member_ids: List[int] = Body(..., embed=True),
@@ -799,6 +927,8 @@ async def bulk_archive_members(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Members not found: {sorted(missing)}",
         )
+
+    await _remove_member_dependencies(db, member_ids)
 
     archived_count = 0
     for member in members:
@@ -859,6 +989,76 @@ async def restore_archived_member(
 
 
 # ── Archived Unit Members List ────────────────────────────────────────────────
+
+async def _fetch_archived_members(
+    db: AsyncSession,
+    archive_year: Optional[str] = None,
+) -> List[dict]:
+    """Load archived members with unit names, optionally filtered by archive year."""
+    stmt = (
+        select(ArchivedUnitMember, UnitName.name.label("unit_name"))
+        .outerjoin(CustomUser, CustomUser.id == ArchivedUnitMember.registered_user_id)
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .order_by(ArchivedUnitMember.archived_at.desc())
+    )
+    if archive_year and archive_year.lower() != "all":
+        stmt = stmt.where(ArchivedUnitMember.archive_year == archive_year.strip())
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    return [
+        {
+            "id": member.id,
+            "registered_user_id": member.registered_user_id,
+            "name": member.name,
+            "gender": member.gender,
+            "dob": member.dob.isoformat() if member.dob else None,
+            "age": member.age,
+            "number": member.number,
+            "qualification": member.qualification,
+            "blood_group": member.blood_group,
+            "archived_at": member.archived_at.isoformat() if member.archived_at else None,
+            "archive_year": member.archive_year,
+            "archive_reason": member.archive_reason,
+            "unit_name": unit_name,
+        }
+        for member, unit_name in rows
+    ]
+
+
+@router.get("/archived-members/export")
+async def export_archived_members(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    archive_year: Optional[str] = Query(
+        None,
+        description='Filter by archive year label, or omit / use "all" for every year',
+    ),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Export archived unit members to Excel or CSV, respecting the archive year filter."""
+    members = await _fetch_archived_members(db, archive_year)
+
+    year_suffix = "all"
+    if archive_year and archive_year.lower() != "all":
+        year_suffix = archive_year.strip().replace("/", "-").replace("\\", "-")
+
+    if format == "csv":
+        export_file = create_archived_members_csv(members)
+        media_type = "text/csv"
+        filename = f"archived_members_{year_suffix}.csv"
+    else:
+        export_file = create_archived_members_excel(members)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"archived_members_{year_suffix}.xlsx"
+
+    return StreamingResponse(
+        export_file,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # Archived Unit Members Endpoint with Pagination
 @router.get("/archived-members", response_model=dict)

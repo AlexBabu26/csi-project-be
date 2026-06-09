@@ -18,6 +18,7 @@ from app.auth.models import (
 )
 from app.units.models import (
     ArchivedUnitMember,
+    ArchivedMemberConcernRequest,
     RemovedUnitMember,
     UnitTransferRequest,
     UnitMemberChangeRequest,
@@ -32,6 +33,7 @@ from app.units.schemas import (
     UnitOfficialsChangeRequestCreate,
     UnitCouncilorChangeRequestCreate,
     UnitMemberAddRequestCreate,
+    ArchivedMemberConcernRequestCreate,
 )
 
 
@@ -1317,4 +1319,423 @@ async def get_member_add_requests(
     
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+def _normalize_gender(gender: Optional[str]) -> Optional[str]:
+    if not gender:
+        return None
+    value = gender.strip().upper()
+    if value in ("M", "MALE"):
+        return "M"
+    if value in ("F", "FEMALE"):
+        return "F"
+    return value
+
+
+def _summarize_archived_members(members: List[ArchivedUnitMember]) -> Dict[str, int]:
+    male = 0
+    female = 0
+    for member in members:
+        gender = _normalize_gender(member.gender)
+        if gender == "M":
+            male += 1
+        elif gender == "F":
+            female += 1
+    return {"total": len(members), "male": male, "female": female}
+
+
+async def get_recent_archived_members_for_unit(
+    db: AsyncSession,
+    user_id: int,
+) -> Dict[str, Any]:
+    """Return the most recent archive_year batch for a unit with summary stats."""
+    year_stmt = (
+        select(ArchivedUnitMember.archive_year)
+        .where(
+            ArchivedUnitMember.registered_user_id == user_id,
+            ArchivedUnitMember.archive_year.isnot(None),
+        )
+        .distinct()
+        .order_by(ArchivedUnitMember.archive_year.desc())
+        .limit(1)
+    )
+    year_result = await db.execute(year_stmt)
+    latest_year = year_result.scalar_one_or_none()
+
+    if not latest_year:
+        return {
+            "archive_year": None,
+            "archive_reason": None,
+            "summary": {"total": 0, "male": 0, "female": 0},
+            "members": [],
+            "pending_concern_member_ids": [],
+            "member_concerns": {},
+        }
+
+    members_stmt = (
+        select(ArchivedUnitMember)
+        .where(
+            ArchivedUnitMember.registered_user_id == user_id,
+            ArchivedUnitMember.archive_year == latest_year,
+        )
+        .order_by(ArchivedUnitMember.name)
+    )
+    members_result = await db.execute(members_stmt)
+    members = list(members_result.scalars().all())
+
+    archive_reason = next((m.archive_reason for m in members if m.archive_reason), None)
+    member_ids = [m.id for m in members]
+
+    pending_ids: List[int] = []
+    member_concerns: Dict[str, Dict[str, Any]] = {}
+    if member_ids:
+        concerns_stmt = (
+            select(ArchivedMemberConcernRequest)
+            .where(
+                ArchivedMemberConcernRequest.archived_unit_member_id.in_(member_ids),
+                ArchivedMemberConcernRequest.registered_user_id == user_id,
+            )
+            .order_by(ArchivedMemberConcernRequest.created_at.desc())
+        )
+        concerns_result = await db.execute(concerns_stmt)
+        for concern in concerns_result.scalars().all():
+            key = str(concern.archived_unit_member_id)
+            if key not in member_concerns:
+                member_concerns[key] = {
+                    "status": concern.status.value,
+                    "admin_response": concern.admin_response,
+                }
+                if concern.status == RequestStatus.PENDING:
+                    pending_ids.append(concern.archived_unit_member_id)
+
+    return {
+        "archive_year": latest_year,
+        "archive_reason": archive_reason,
+        "summary": _summarize_archived_members(members),
+        "members": members,
+        "pending_concern_member_ids": pending_ids,
+        "member_concerns": member_concerns,
+    }
+
+
+async def _enrich_concern_requests(
+    db: AsyncSession,
+    requests: List[ArchivedMemberConcernRequest],
+) -> List[Dict[str, Any]]:
+    if not requests:
+        return []
+
+    archived_ids = {r.archived_unit_member_id for r in requests}
+    user_ids = {r.registered_user_id for r in requests}
+
+    archived_stmt = select(ArchivedUnitMember).where(ArchivedUnitMember.id.in_(archived_ids))
+    archived_result = await db.execute(archived_stmt)
+    archived_map = {m.id: m for m in archived_result.scalars().all()}
+
+    users_stmt = (
+        select(CustomUser, UnitName.name.label("unit_name"))
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .where(CustomUser.id.in_(user_ids))
+    )
+    users_result = await db.execute(users_stmt)
+    unit_name_map = {user.id: unit_name for user, unit_name in users_result.all()}
+
+    enriched: List[Dict[str, Any]] = []
+    for request in requests:
+        archived = archived_map.get(request.archived_unit_member_id)
+        enriched.append({
+            "id": request.id,
+            "archived_unit_member_id": request.archived_unit_member_id,
+            "registered_user_id": request.registered_user_id,
+            "concern_text": request.concern_text,
+            "admin_response": request.admin_response,
+            "status": request.status.value,
+            "created_at": request.created_at.isoformat(),
+            "updated_at": request.updated_at.isoformat(),
+            "archived_member_name": archived.name if archived else None,
+            "archived_member_gender": archived.gender if archived else None,
+            "archived_member_dob": archived.dob.isoformat() if archived and archived.dob else None,
+            "unit_name": unit_name_map.get(request.registered_user_id),
+            "archive_year": archived.archive_year if archived else None,
+        })
+    return enriched
+
+
+async def create_archived_member_concern_request(
+    db: AsyncSession,
+    user_id: int,
+    data: ArchivedMemberConcernRequestCreate,
+) -> ArchivedMemberConcernRequest:
+    """Create a concern request for a recently archived member."""
+    archived_stmt = select(ArchivedUnitMember).where(
+        ArchivedUnitMember.id == data.archived_unit_member_id,
+        ArchivedUnitMember.registered_user_id == user_id,
+    )
+    archived_result = await db.execute(archived_stmt)
+    archived_member = archived_result.scalar_one_or_none()
+    if not archived_member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archived member not found for this unit",
+        )
+
+    recent = await get_recent_archived_members_for_unit(db, user_id)
+    recent_ids = {m.id for m in recent["members"]}
+    if archived_member.id not in recent_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Concerns can only be raised for members from the most recent archive batch",
+        )
+
+    pending_stmt = select(ArchivedMemberConcernRequest).where(
+        ArchivedMemberConcernRequest.archived_unit_member_id == data.archived_unit_member_id,
+        ArchivedMemberConcernRequest.status == RequestStatus.PENDING,
+    )
+    pending_result = await db.execute(pending_stmt)
+    if pending_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A pending concern already exists for this archived member",
+        )
+
+    concern_request = ArchivedMemberConcernRequest(
+        archived_unit_member_id=data.archived_unit_member_id,
+        registered_user_id=user_id,
+        concern_text=data.concern_text.strip(),
+        status=RequestStatus.PENDING,
+    )
+    db.add(concern_request)
+    await db.commit()
+    await db.refresh(concern_request)
+    return concern_request
+
+
+async def approve_archived_member_concern_request(
+    db: AsyncSession,
+    request_id: int,
+    admin_response: Optional[str] = None,
+) -> ArchivedMemberConcernRequest:
+    """Mark a concern as reviewed and resolved."""
+    stmt = select(ArchivedMemberConcernRequest).where(
+        ArchivedMemberConcernRequest.id == request_id,
+        ArchivedMemberConcernRequest.status == RequestStatus.PENDING,
+    )
+    result = await db.execute(stmt)
+    concern_request = result.scalar_one_or_none()
+    if not concern_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Concern request not found or already processed",
+        )
+
+    concern_request.status = RequestStatus.APPROVED
+    if admin_response:
+        concern_request.admin_response = admin_response.strip()
+
+    await db.commit()
+    await db.refresh(concern_request)
+    return concern_request
+
+
+async def reject_archived_member_concern_request(
+    db: AsyncSession,
+    request_id: int,
+    admin_response: Optional[str] = None,
+) -> ArchivedMemberConcernRequest:
+    """Reject a concern after admin review."""
+    stmt = select(ArchivedMemberConcernRequest).where(
+        ArchivedMemberConcernRequest.id == request_id,
+        ArchivedMemberConcernRequest.status == RequestStatus.PENDING,
+    )
+    result = await db.execute(stmt)
+    concern_request = result.scalar_one_or_none()
+    if not concern_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Concern request not found or already processed",
+        )
+
+    concern_request.status = RequestStatus.REJECTED
+    if admin_response:
+        concern_request.admin_response = admin_response.strip()
+
+    await db.commit()
+    await db.refresh(concern_request)
+    return concern_request
+
+
+async def get_archived_member_concern_requests(
+    db: AsyncSession,
+    user_id: Optional[int] = None,
+    status_filter: Optional[RequestStatus] = None,
+) -> List[Dict[str, Any]]:
+    """Get archived member concern requests, optionally filtered by unit user."""
+    stmt = select(ArchivedMemberConcernRequest)
+    if user_id:
+        stmt = stmt.where(ArchivedMemberConcernRequest.registered_user_id == user_id)
+    if status_filter:
+        stmt = stmt.where(ArchivedMemberConcernRequest.status == status_filter)
+    stmt = stmt.order_by(ArchivedMemberConcernRequest.created_at.desc())
+
+    result = await db.execute(stmt)
+    requests = list(result.scalars().all())
+    return await _enrich_concern_requests(db, requests)
+
+
+async def get_unit_my_requests(
+    db: AsyncSession,
+    user_id: int,
+) -> Dict[str, Any]:
+    """Aggregate all request types for a unit user's My Requests page."""
+    transfers = await get_transfer_requests(db, user_id=user_id)
+    member_info_changes = await get_member_change_requests(db, user_id=user_id)
+    officials_changes = await get_officials_change_requests(db, user_id=user_id)
+    councilor_changes = await get_councilor_change_requests(db, user_id=user_id)
+    member_adds = await get_member_add_requests(db, user_id=user_id)
+    archived_concerns = await get_archived_member_concern_requests(db, user_id=user_id)
+
+    user_stmt = (
+        select(CustomUser, UnitName.name.label("unit_name"))
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .where(CustomUser.id == user_id)
+    )
+    user_result = await db.execute(user_stmt)
+    user_row = user_result.first()
+    unit_name = user_row[1] if user_row else None
+
+    def _serialize_transfer(req: Dict[str, Any]) -> Dict[str, Any]:
+        created_at = req["created_at"]
+        status = req["status"]
+        return {
+            "id": req["id"],
+            "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "memberId": req["unit_member_id"],
+            "memberName": req.get("member_name") or f"Member #{req['unit_member_id']}",
+            "currentUnitId": req.get("current_unit_id") or 0,
+            "currentUnitName": req.get("current_unit_name") or "",
+            "destinationUnitId": req["destination_unit_id"],
+            "destinationUnitName": req.get("destination_unit_name") or "",
+            "reason": req["reason"],
+            "status": status.value if hasattr(status, "value") else status,
+            "proof": req.get("proof"),
+        }
+
+    def _serialize_member_info(req: UnitMemberChangeRequest) -> Dict[str, Any]:
+        return {
+            "id": req.id,
+            "createdAt": req.created_at.isoformat(),
+            "memberId": req.unit_member_id,
+            "memberName": req.original_name or req.name or f"Member #{req.unit_member_id}",
+            "unitName": unit_name or "",
+            "changes": {
+                k: v
+                for k, v in {
+                    "name": req.name,
+                    "gender": req.gender,
+                    "dob": req.dob.isoformat() if req.dob else None,
+                    "bloodGroup": req.blood_group,
+                    "qualification": req.qualification,
+                }.items()
+                if v is not None
+            },
+            "reason": req.reason,
+            "status": req.status.value,
+            "proof": req.proof,
+        }
+
+    def _serialize_officials(req: UnitOfficialsChangeRequest) -> Dict[str, Any]:
+        return {
+            "id": req.id,
+            "createdAt": req.created_at.isoformat(),
+            "unitId": user_id,
+            "unitName": unit_name or "",
+            "originalOfficials": {
+                "presidentDesignation": req.original_president_designation,
+                "presidentName": req.original_president_name or "",
+                "presidentPhone": req.original_president_phone or "",
+                "vicePresidentName": req.original_vice_president_name or "",
+                "vicePresidentPhone": req.original_vice_president_phone or "",
+                "secretaryName": req.original_secretary_name or "",
+                "secretaryPhone": req.original_secretary_phone or "",
+                "jointSecretaryName": req.original_joint_secretary_name or "",
+                "jointSecretaryPhone": req.original_joint_secretary_phone or "",
+                "treasurerName": req.original_treasurer_name or "",
+                "treasurerPhone": req.original_treasurer_phone or "",
+            },
+            "requestedChanges": {
+                k: v
+                for k, v in {
+                    "presidentDesignation": req.president_designation,
+                    "presidentName": req.president_name,
+                    "presidentPhone": req.president_phone,
+                    "vicePresidentName": req.vice_president_name,
+                    "vicePresidentPhone": req.vice_president_phone,
+                    "secretaryName": req.secretary_name,
+                    "secretaryPhone": req.secretary_phone,
+                    "jointSecretaryName": req.joint_secretary_name,
+                    "jointSecretaryPhone": req.joint_secretary_phone,
+                    "treasurerName": req.treasurer_name,
+                    "treasurerPhone": req.treasurer_phone,
+                }.items()
+                if v is not None
+            },
+            "reason": req.reason,
+            "status": req.status.value,
+            "proof": req.proof,
+        }
+
+    def _serialize_councilor(req: UnitCouncilorChangeRequest) -> Dict[str, Any]:
+        return {
+            "id": req.id,
+            "createdAt": req.created_at.isoformat(),
+            "unitId": user_id,
+            "unitName": unit_name or "",
+            "councilorId": req.unit_councilor_id,
+            "originalMemberId": req.original_unit_member_id or 0,
+            "originalMemberName": f"Member #{req.original_unit_member_id or 0}",
+            "newMemberId": req.unit_member_id,
+            "newMemberName": f"Member #{req.unit_member_id}" if req.unit_member_id else None,
+            "reason": req.reason,
+            "status": req.status.value,
+            "proof": req.proof,
+        }
+
+    def _serialize_member_add(req: UnitMemberAddRequest) -> Dict[str, Any]:
+        return {
+            "id": req.id,
+            "createdAt": req.created_at.isoformat(),
+            "unitId": req.registered_user_id,
+            "unitName": unit_name or "",
+            "name": req.name,
+            "gender": req.gender,
+            "number": req.number,
+            "dob": req.dob.isoformat(),
+            "qualification": req.qualification,
+            "bloodGroup": req.blood_group,
+            "reason": req.reason,
+            "status": req.status.value,
+            "proof": req.proof,
+        }
+
+    def _serialize_concern(req: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": req["id"],
+            "createdAt": req["created_at"],
+            "archivedMemberId": req["archived_unit_member_id"],
+            "archivedMemberName": req.get("archived_member_name") or "",
+            "archiveYear": req.get("archive_year"),
+            "unitName": req.get("unit_name") or "",
+            "concernText": req["concern_text"],
+            "adminResponse": req.get("admin_response"),
+            "status": req["status"],
+        }
+
+    return {
+        "transfers": [_serialize_transfer(r) for r in transfers],
+        "memberInfoChanges": [_serialize_member_info(r) for r in member_info_changes],
+        "officialsChanges": [_serialize_officials(r) for r in officials_changes],
+        "councilorChanges": [_serialize_councilor(r) for r in councilor_changes],
+        "memberAdds": [_serialize_member_add(r) for r in member_adds],
+        "archivedMemberConcerns": [_serialize_concern(r) for r in archived_concerns],
+    }
 

@@ -231,6 +231,31 @@ class UnitCouncilorChangeRequest(Base):
     )
 
 
+class ArchivedMemberConcernRequest(Base):
+    """
+    Unit-raised concerns about recently archived members for admin review.
+    """
+
+    __tablename__ = "archived_member_concern_request"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    archived_unit_member_id: Mapped[int] = mapped_column(
+        ForeignKey("archived_unit_member.id"), nullable=False, index=True
+    )
+    registered_user_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=False, index=True
+    )
+    concern_text: Mapped[str] = mapped_column(Text, nullable=False)
+    admin_response: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[RequestStatus] = mapped_column(
+        Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
 class UnitMemberAddRequest(Base):
     """
     Manages requests to add new members to a unit.

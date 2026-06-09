@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -46,6 +46,34 @@ class ArchivedUnitMemberResponse(ArchivedUnitMemberBase):
     id: int
     registered_user_id: int
     archived_at: datetime
+    archive_year: Optional[str] = None
+    archive_reason: Optional[str] = None
+
+
+class ArchivedMembersSummary(BaseModel):
+    """Gender and total counts for archived members."""
+
+    total: int = 0
+    male: int = 0
+    female: int = 0
+
+
+class ArchivedMemberConcernStatus(BaseModel):
+    """Latest concern status for an archived member."""
+
+    status: RequestStatus
+    admin_response: Optional[str] = None
+
+
+class RecentArchivedMembersResponse(BaseModel):
+    """Recent archived members batch for a unit with summary stats."""
+
+    archive_year: Optional[str] = None
+    archive_reason: Optional[str] = None
+    summary: ArchivedMembersSummary
+    members: List[ArchivedUnitMemberResponse]
+    pending_concern_member_ids: List[int] = []
+    member_concerns: dict[str, ArchivedMemberConcernStatus] = {}
 
 
 # Removed Unit Member Schemas
@@ -281,6 +309,35 @@ class UnitCouncilorChangeRequestResponse(BaseModel):
 
 # Unit Member Add Request Schemas
 VALID_BLOOD_GROUPS = {"A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
+
+
+# Archived Member Concern Request Schemas
+class ArchivedMemberConcernRequestCreate(BaseModel):
+    """Create schema for archived member concern requests."""
+
+    archived_unit_member_id: int = Field(..., gt=0)
+    concern_text: str = Field(..., min_length=20, max_length=5000)
+
+
+class ArchivedMemberConcernRequestResponse(BaseModel):
+    """Response schema for archived member concern requests."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    archived_unit_member_id: int
+    registered_user_id: int
+    concern_text: str
+    admin_response: Optional[str] = None
+    status: RequestStatus
+    created_at: datetime
+    updated_at: datetime
+    # Enriched fields for admin/unit views
+    archived_member_name: Optional[str] = None
+    archived_member_gender: Optional[str] = None
+    archived_member_dob: Optional[date] = None
+    unit_name: Optional[str] = None
+    archive_year: Optional[str] = None
 
 
 class UnitMemberAddRequestBase(BaseModel):

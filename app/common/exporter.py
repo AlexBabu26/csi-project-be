@@ -1,6 +1,7 @@
+import csv
 from pathlib import Path
 from typing import Iterable, Sequence, List, Dict, Any
-from io import BytesIO
+from io import BytesIO, StringIO
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
@@ -177,6 +178,68 @@ def create_members_excel(
         ])
     
     return create_styled_excel(headers, rows, "Unit Members")
+
+
+ARCHIVED_MEMBER_EXPORT_HEADERS = [
+    "Archived At",
+    "Name",
+    "Unit Name",
+    "Gender",
+    "Date of Birth",
+    "Age",
+    "Contact",
+    "Qualification",
+    "Blood Group",
+    "Archive Year",
+    "Archive Reason",
+]
+
+
+def _format_archived_member_gender(gender: str | None) -> str:
+    if gender == "M":
+        return "Male"
+    if gender == "F":
+        return "Female"
+    return gender or ""
+
+
+def _archived_member_export_rows(members_data: List[Dict[str, Any]]) -> List[List[Any]]:
+    rows: List[List[Any]] = []
+    for member in members_data:
+        rows.append([
+            member.get("archived_at", ""),
+            member.get("name", ""),
+            member.get("unit_name", "") or "",
+            _format_archived_member_gender(member.get("gender")),
+            member.get("dob", ""),
+            member.get("age", ""),
+            f"+91 {member.get('number', '')}" if member.get("number") else "",
+            member.get("qualification", "") or "",
+            member.get("blood_group", "") or "",
+            member.get("archive_year", "") or "",
+            member.get("archive_reason", "") or "Not specified",
+        ])
+    return rows
+
+
+def create_archived_members_excel(members_data: List[Dict[str, Any]]) -> BytesIO:
+    """Create Excel file for archived unit members."""
+    return create_styled_excel(
+        ARCHIVED_MEMBER_EXPORT_HEADERS,
+        _archived_member_export_rows(members_data),
+        "Archived Members",
+    )
+
+
+def create_archived_members_csv(members_data: List[Dict[str, Any]]) -> BytesIO:
+    """Create CSV file for archived unit members."""
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(ARCHIVED_MEMBER_EXPORT_HEADERS)
+    writer.writerows(_archived_member_export_rows(members_data))
+    csv_bytes = BytesIO(buffer.getvalue().encode("utf-8-sig"))
+    csv_bytes.seek(0)
+    return csv_bytes
 
 
 def create_password_reset_credentials_excel(

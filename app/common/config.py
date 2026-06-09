@@ -47,8 +47,10 @@ class Settings(BaseSettings):
     # Pagination defaults
     default_page_size: int = 50
 
-    # Email settings placeholder (for password reset tokens)
+    # Email / notification settings
     mail_sender: Optional[str] = None
+    resend_api_key: Optional[str] = None
+    admin_notification_email: Optional[str] = None
 
 
 @lru_cache

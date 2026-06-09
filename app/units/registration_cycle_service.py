@@ -24,8 +24,8 @@ CHANGE_REQUEST_REQUIRED_MSG = (
 
 MEMBER_PROFILE_FIELDS = ("name", "gender", "dob", "number", "qualification", "blood_group")
 
-# Member fields that may be set inline during renewal registration (missing data only).
-RENEWAL_WIZARD_INLINE_MEMBER_FIELDS = frozenset({"blood_group"})
+# Member fields that may be updated inline during renewal registration.
+RENEWAL_WIZARD_INLINE_MEMBER_FIELDS = frozenset({"blood_group", "number", "qualification"})
 
 
 async def get_site_settings(db: AsyncSession) -> Optional[SiteSettings]:
@@ -202,7 +202,7 @@ def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) ->
 
 
 def validate_renewal_member_update(cycle: UnitRegistrationCycle, data) -> None:
-    """On renewal, only living-location and blood-group gaps can be filled via the wizard."""
+    """On renewal, selected member fields can be updated inline via the wizard."""
     require_cycle_in_progress(cycle)
     if cycle.path_type != "renewal":
         return
@@ -218,7 +218,7 @@ def validate_renewal_member_update(cycle: UnitRegistrationCycle, data) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Member profile changes during renewal must use a Member Info Change request. "
-                "Only living location and blood group can be updated here."
+                "Phone, qualification, blood group, and living location can be updated here."
             ),
         )
 

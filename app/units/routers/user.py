@@ -22,6 +22,7 @@ from app.auth.models import (
 )
 from app.admin.models import SiteSettings
 from app.admin.routers.site import get_public_file_url
+from app.common.notifications import notify_admin_archived_member_concern
 from app.units.models import (
     ArchivedUnitMember,
     UnitTransferRequest,
@@ -56,6 +57,9 @@ from app.units.schemas import (
     UnitMemberAddRequestCreate,
     UnitMemberAddRequestResponse,
     ArchivedUnitMemberResponse,
+    RecentArchivedMembersResponse,
+    ArchivedMemberConcernRequestCreate,
+    ArchivedMemberConcernRequestResponse,
 )
 from app.units import service as units_service
 
@@ -562,18 +566,118 @@ async def complete_declaration(
     return {"message": "Registration completed successfully"}
 
 
+@router.get("/archived-members/recent", response_model=RecentArchivedMembersResponse)
+async def get_recent_archived_members(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get the most recent archive batch for the logged-in unit with summary stats."""
+    data = await units_service.get_recent_archived_members_for_unit(db, current_user.id)
+    return {
+        "archive_year": data["archive_year"],
+        "archive_reason": data["archive_reason"],
+        "summary": data["summary"],
+        "members": [
+            ArchivedUnitMemberResponse.model_validate(member).model_dump(mode="json")
+            for member in data["members"]
+        ],
+        "pending_concern_member_ids": data["pending_concern_member_ids"],
+        "member_concerns": data["member_concerns"],
+    }
+
+
 @router.get("/archived-members", response_model=List[ArchivedUnitMemberResponse])
 async def get_archived_members(
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Get list of archived members."""
+    """Get list of archived members (legacy — prefer /archived-members/recent)."""
     stmt = select(ArchivedUnitMember).where(
         ArchivedUnitMember.registered_user_id == current_user.id
     ).order_by(ArchivedUnitMember.name)
     
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.post("/archived-member-concern-request", response_model=ArchivedMemberConcernRequestResponse)
+async def create_archived_member_concern_request(
+    data: ArchivedMemberConcernRequestCreate,
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Raise a concern about a recently archived member for admin review."""
+    concern = await units_service.create_archived_member_concern_request(
+        db, current_user.id, data
+    )
+
+    archived_stmt = select(ArchivedUnitMember).where(
+        ArchivedUnitMember.id == data.archived_unit_member_id
+    )
+    archived_result = await db.execute(archived_stmt)
+    archived_member = archived_result.scalar_one_or_none()
+
+    unit_name_str = None
+    if current_user.unit_name_id:
+        unit_name_result = await db.execute(
+            select(UnitName).where(UnitName.id == current_user.unit_name_id)
+        )
+        unit_name_obj = unit_name_result.scalar_one_or_none()
+        unit_name_str = unit_name_obj.name if unit_name_obj else current_user.username
+
+    settings_result = await db.execute(select(SiteSettings).limit(1))
+    settings = settings_result.scalar_one_or_none()
+
+    notify_admin_archived_member_concern(
+        unit_name=unit_name_str or current_user.username,
+        member_name=archived_member.name if archived_member else "Unknown",
+        archive_year=archived_member.archive_year if archived_member else None,
+        concern_text=data.concern_text,
+        recipient_email=settings.contact_email if settings else None,
+    )
+
+    enriched = await units_service.get_archived_member_concern_requests(
+        db, user_id=current_user.id
+    )
+    match = next((item for item in enriched if item["id"] == concern.id), None)
+    if match:
+        return match
+    return concern
+
+
+@router.get("/archived-member-concern-requests")
+async def get_archived_member_concern_requests(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get archived member concern requests for the current unit."""
+    return await units_service.get_archived_member_concern_requests(
+        db, user_id=current_user.id
+    )
+
+
+@router.get("/my-requests")
+async def get_my_requests(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Aggregate all request types for the logged-in unit user."""
+    return await units_service.get_unit_my_requests(db, current_user.id)
+
+
+@router.get("/{unit_id}/my-requests")
+async def get_my_requests_by_unit_id(
+    unit_id: int,
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Aggregate all request types (legacy path with unit id)."""
+    if unit_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot view requests for another unit",
+        )
+    return await units_service.get_unit_my_requests(db, current_user.id)
 
 
 @router.post("/transfer-request", response_model=UnitTransferRequestResponse)
