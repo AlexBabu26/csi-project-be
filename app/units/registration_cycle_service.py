@@ -270,13 +270,21 @@ async def get_payment_status_for_cycle(
     result = await db.execute(stmt)
     payments = list(result.scalars().all())
 
+    balance_amount = None
     if not payments:
         overall = "not_submitted"
-    elif any(p.status == PaymentProofStatus.APPROVED for p in payments):
-        overall = "approved"
     else:
-        latest = payments[-1]
-        overall = "rejected" if latest.status == PaymentProofStatus.REJECTED else "pending"
+        approved_payments = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+        if approved_payments:
+            latest_approved = approved_payments[-1]
+            balance_amount = latest_approved.balance_amount
+            if balance_amount is not None and balance_amount > 0:
+                overall = "partial"
+            else:
+                overall = "approved"
+        else:
+            latest = payments[-1]
+            overall = "rejected" if latest.status == PaymentProofStatus.REJECTED else "pending"
 
     latest_rejection_note = None
     items = []
@@ -287,16 +295,23 @@ async def get_payment_status_for_cycle(
 
     return {
         "overall_status": overall,
+        "balance_amount": balance_amount,
         "latest_rejection_note": latest_rejection_note,
         "payments": items,
     }
 
 
-async def cycle_has_approved_payment(db: AsyncSession, cycle_id: int) -> bool:
+async def cycle_is_fully_paid(db: AsyncSession, cycle_id: int) -> bool:
     result = await db.execute(
-        select(UnitRegistrationPayment).where(
+        select(UnitRegistrationPayment)
+        .where(
             UnitRegistrationPayment.registration_cycle_id == cycle_id,
             UnitRegistrationPayment.status == PaymentProofStatus.APPROVED,
         )
+        .order_by(UnitRegistrationPayment.submitted_at.asc())
     )
-    return result.scalar_one_or_none() is not None
+    approved_payments = list(result.scalars().all())
+    if not approved_payments:
+        return False
+    latest_approved = approved_payments[-1]
+    return latest_approved.balance_amount in (None, 0)

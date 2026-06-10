@@ -1063,6 +1063,7 @@ async def get_payment_status(
     if cycle is None:
         return {
             "overall_status": "not_submitted",
+            "balance_amount": None,
             "latest_rejection_note": None,
             "qr_url": None,
             "registration_year": await cycle_service.get_current_registration_year(db),
@@ -1081,6 +1082,7 @@ async def get_payment_status(
             "id": p.id,
             "file_url": file_url,
             "total_amount": p.total_amount,
+            "balance_amount": p.balance_amount,
             "status": p.status.value,
             "rejection_note": p.rejection_note,
             "submitted_at": p.submitted_at.isoformat(),
@@ -1094,6 +1096,7 @@ async def get_payment_status(
 
     return {
         "overall_status": payment_data["overall_status"],
+        "balance_amount": payment_data["balance_amount"],
         "latest_rejection_note": payment_data["latest_rejection_note"],
         "qr_url": qr_url,
         "registration_year": cycle.registration_year,
@@ -1119,10 +1122,10 @@ async def submit_payment_proof(
             detail="Registration must be completed before submitting payment.",
         )
 
-    if await cycle_service.cycle_has_approved_payment(db, cycle.id):
+    if await cycle_service.cycle_is_fully_paid(db, cycle.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Payment for this registration year has already been approved.",
+            detail="Payment for this registration year has already been fully approved.",
         )
 
     # Upload file to B2

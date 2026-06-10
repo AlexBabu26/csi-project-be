@@ -1305,7 +1305,10 @@ async def list_registration_payments(
             UnitRegistrationCycle,
             UnitRegistrationCycle.id == UnitRegistrationPayment.registration_cycle_id,
         )
-        .order_by(UnitRegistrationPayment.submitted_at.desc())
+        .order_by(
+            func.lower(func.coalesce(UnitName.name, CustomUser.username)).asc(),
+            UnitRegistrationPayment.submitted_at.asc(),
+        )
     )
     if payment_status:
         try:
@@ -1328,6 +1331,7 @@ async def list_registration_payments(
             "registration_year": cycle.registration_year if cycle else None,
             "file_url": get_public_file_url(p.file_path) if p.file_path else None,
             "total_amount": p.total_amount,
+            "balance_amount": p.balance_amount,
             "status": p.status.value,
             "rejection_note": p.rejection_note,
             "submitted_at": p.submitted_at.isoformat(),
@@ -1340,10 +1344,14 @@ async def list_registration_payments(
 @router.post("/registration-payments/{payment_id}/approve", response_model=dict)
 async def approve_registration_payment(
     payment_id: int,
+    balance_amount: int = Body(..., embed=True),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a unit registration payment proof submission."""
+    if balance_amount < 0:
+        raise HTTPException(status_code=400, detail="Balance amount cannot be negative")
+
     stmt = select(UnitRegistrationPayment).where(UnitRegistrationPayment.id == payment_id)
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
@@ -1351,13 +1359,24 @@ async def approve_registration_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment submission not found")
 
+    if payment.total_amount is not None and balance_amount > payment.total_amount:
+        raise HTTPException(
+            status_code=400,
+            detail="Balance amount cannot exceed the registration total",
+        )
+
     payment.status = PaymentProofStatus.APPROVED
+    payment.balance_amount = balance_amount
     payment.rejection_note = None
     payment.reviewed_at = datetime.now(timezone.utc)
     payment.reviewed_by_id = current_user.id
     await db.commit()
 
-    return {"message": "Payment approved successfully", "id": payment_id}
+    return {
+        "message": "Payment approved successfully",
+        "id": payment_id,
+        "balance_amount": balance_amount,
+    }
 
 
 @router.post("/registration-payments/{payment_id}/reject", response_model=dict)
