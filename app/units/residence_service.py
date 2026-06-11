@@ -104,6 +104,14 @@ async def apply_residence_fields(
 
     if residence_location == ResidenceLocation.WITHIN_KERALA:
         kerala_state = await get_kerala_state(db)
+        if residence_city_id:
+            city = await get_city_with_relations(db, residence_city_id)
+            if city.state_id != kerala_state.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected city must be in Kerala",
+                )
+            return ResidenceLocation.WITHIN_KERALA, kerala_state.id, residence_city_id
         return ResidenceLocation.WITHIN_KERALA, kerala_state.id, None
 
     if residence_city_id:
