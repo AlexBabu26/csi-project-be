@@ -1,7 +1,7 @@
 """Units user router - endpoints for registered unit users."""
 
-from datetime import datetime
-from typing import List
+from datetime import date, datetime
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -750,11 +750,38 @@ async def get_transfer_requests(
 
 @router.post("/member-change-request", response_model=UnitMemberChangeRequestResponse)
 async def create_member_change_request(
-    data: UnitMemberChangeRequestCreate,
+    unit_member_id: int = Form(...),
+    reason: str = Form(...),
+    proof: UploadFile = File(..., description="Proof document (PDF, PNG, JPG — max 5 MB)"),
+    name: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    dob: Optional[str] = Form(None),
+    blood_group: Optional[str] = Form(None),
+    qualification: Optional[str] = Form(None),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a member information change request."""
+    if not proof.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Proof document is required",
+        )
+
+    proof_path, _ = save_upload_file(proof, subdir="units/member-change-requests")
+
+    parsed_dob = date.fromisoformat(dob) if dob else None
+
+    data = UnitMemberChangeRequestCreate(
+        unit_member_id=unit_member_id,
+        reason=reason,
+        name=name or None,
+        gender=gender or None,
+        dob=parsed_dob,
+        blood_group=blood_group or None,
+        qualification=qualification or None,
+        proof=proof_path,
+    )
     return await units_service.create_member_info_change_request(db, current_user.id, data)
 
 
