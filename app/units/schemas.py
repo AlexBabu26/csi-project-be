@@ -506,6 +506,7 @@ class UnitMemberResponse(UnitMemberBase):
     
     id: int
     registered_user_id: int
+    added_registration_cycle_id: Optional[int] = None
 
 
 # Unit Officials Schemas (for regular operations)

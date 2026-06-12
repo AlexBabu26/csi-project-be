@@ -201,10 +201,17 @@ def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) ->
         )
 
 
-def validate_renewal_member_update(cycle: UnitRegistrationCycle, data) -> None:
+def member_added_in_cycle(member, cycle: UnitRegistrationCycle) -> bool:
+    """True when the member was created during the given registration cycle."""
+    return member.added_registration_cycle_id == cycle.id
+
+
+def validate_renewal_member_update(cycle: UnitRegistrationCycle, data, member) -> None:
     """On renewal, selected member fields can be updated inline via the wizard."""
     require_cycle_in_progress(cycle)
     if cycle.path_type != "renewal":
+        return
+    if member_added_in_cycle(member, cycle):
         return
 
     changed_profile_fields = [

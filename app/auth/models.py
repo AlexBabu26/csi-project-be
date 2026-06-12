@@ -159,6 +159,9 @@ class UnitMembers(Base):
     )
     residence_state_id: Mapped[Optional[int]] = mapped_column(ForeignKey("state.id"), nullable=True, index=True)
     residence_city_id: Mapped[Optional[int]] = mapped_column(ForeignKey("city.id"), nullable=True, index=True)
+    added_registration_cycle_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("unit_registration_cycle.id"), nullable=True, index=True
+    )
 
     registered_user: Mapped["CustomUser"] = relationship("CustomUser", back_populates="unit_members")
     residence_state: Mapped[Optional["State"]] = relationship("State", back_populates="unit_members")

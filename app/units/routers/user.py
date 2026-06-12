@@ -296,7 +296,7 @@ async def add_unit_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit member."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id)
 
     # Check for duplicates
     stmt = select(UnitMembers).where(
@@ -351,6 +351,7 @@ async def add_unit_member(
         residence_location=residence_location,
         residence_state_id=residence_state_id,
         residence_city_id=residence_city_id,
+        added_registration_cycle_id=cycle.id,
     )
     
     db.add(member)
@@ -823,7 +824,6 @@ async def update_member(
 ):
     """Update a unit member."""
     cycle = await _get_wizard_cycle(db, current_user.id)
-    cycle_service.validate_renewal_member_update(cycle, data)
 
     # Get member
     stmt = select(UnitMembers).where(
@@ -840,6 +840,8 @@ async def update_member(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found"
         )
+
+    cycle_service.validate_renewal_member_update(cycle, data, member)
     
     # Update fields
     if data.name is not None:
@@ -877,7 +879,7 @@ async def delete_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a unit member."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id)
 
     # Get member
     stmt = select(UnitMembers).where(
@@ -893,6 +895,18 @@ async def delete_member(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found"
+        )
+
+    if (
+        cycle.path_type == "renewal"
+        and not cycle_service.member_added_in_cycle(member, cycle)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Existing members cannot be removed during renewal. "
+                "Use archive or change request workflows."
+            ),
         )
     
     member_name = member.name
