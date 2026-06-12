@@ -796,11 +796,48 @@ async def get_member_change_requests(
 
 @router.post("/officials-change-request", response_model=UnitOfficialsChangeRequestResponse)
 async def create_officials_change_request(
-    data: UnitOfficialsChangeRequestCreate,
+    unit_official_id: int = Form(...),
+    reason: str = Form(...),
+    proof: UploadFile = File(..., description="Proof document (PDF, PNG, JPG — max 5 MB)"),
+    president_designation: Optional[str] = Form(None),
+    president_name: Optional[str] = Form(None),
+    president_phone: Optional[str] = Form(None),
+    vice_president_name: Optional[str] = Form(None),
+    vice_president_phone: Optional[str] = Form(None),
+    secretary_name: Optional[str] = Form(None),
+    secretary_phone: Optional[str] = Form(None),
+    joint_secretary_name: Optional[str] = Form(None),
+    joint_secretary_phone: Optional[str] = Form(None),
+    treasurer_name: Optional[str] = Form(None),
+    treasurer_phone: Optional[str] = Form(None),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create an officials change request."""
+    if not proof.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Proof document is required",
+        )
+
+    proof_path, _ = save_upload_file(proof, subdir="units/officials-change-requests")
+
+    data = UnitOfficialsChangeRequestCreate(
+        unit_official_id=unit_official_id,
+        reason=reason,
+        president_designation=president_designation or None,
+        president_name=president_name or None,
+        president_phone=president_phone or None,
+        vice_president_name=vice_president_name or None,
+        vice_president_phone=vice_president_phone or None,
+        secretary_name=secretary_name or None,
+        secretary_phone=secretary_phone or None,
+        joint_secretary_name=joint_secretary_name or None,
+        joint_secretary_phone=joint_secretary_phone or None,
+        treasurer_name=treasurer_name or None,
+        treasurer_phone=treasurer_phone or None,
+        proof=proof_path,
+    )
     return await units_service.create_officials_change_request(db, current_user.id, data)
 
 
@@ -815,11 +852,28 @@ async def get_officials_change_requests(
 
 @router.post("/councilor-change-request", response_model=UnitCouncilorChangeRequestResponse)
 async def create_councilor_change_request(
-    data: UnitCouncilorChangeRequestCreate,
+    unit_councilor_id: int = Form(...),
+    unit_member_id: int = Form(...),
+    reason: str = Form(...),
+    proof: UploadFile = File(..., description="Proof document (PDF, PNG, JPG — max 5 MB)"),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a councilor change request."""
+    if not proof.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Proof document is required",
+        )
+
+    proof_path, _ = save_upload_file(proof, subdir="units/councilor-change-requests")
+
+    data = UnitCouncilorChangeRequestCreate(
+        unit_councilor_id=unit_councilor_id,
+        unit_member_id=unit_member_id,
+        reason=reason,
+        proof=proof_path,
+    )
     return await units_service.create_councilor_change_request(db, current_user.id, data)
 
 
@@ -834,11 +888,32 @@ async def get_councilor_change_requests(
 
 @router.post("/member-add-request", response_model=UnitMemberAddRequestResponse)
 async def create_member_add_request(
-    data: UnitMemberAddRequestCreate,
+    name: str = Form(...),
+    gender: str = Form(...),
+    dob: str = Form(...),
+    number: str = Form(...),
+    blood_group: str = Form(...),
+    reason: str = Form(...),
+    qualification: Optional[str] = Form(None),
+    proof: Optional[UploadFile] = File(None, description="Proof document (PDF, PNG, JPG — max 5 MB)"),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a request to add a new member."""
+    proof_path = None
+    if proof and proof.filename:
+        proof_path, _ = save_upload_file(proof, subdir="units/member-add-requests")
+
+    data = UnitMemberAddRequestCreate(
+        name=name,
+        gender=gender,
+        dob=date.fromisoformat(dob),
+        number=number,
+        blood_group=blood_group,
+        reason=reason,
+        qualification=qualification or None,
+        proof=proof_path,
+    )
     return await units_service.create_member_add_request(db, current_user.id, data)
 
 
