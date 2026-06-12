@@ -879,7 +879,7 @@ async def delete_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Delete a unit member."""
-    cycle = await _get_wizard_cycle(db, current_user.id)
+    await _get_wizard_cycle(db, current_user.id)
 
     # Get member
     stmt = select(UnitMembers).where(
@@ -895,18 +895,6 @@ async def delete_member(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found"
-        )
-
-    if (
-        cycle.path_type == "renewal"
-        and not cycle_service.member_added_in_cycle(member, cycle)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Existing members cannot be removed during renewal. "
-                "Use archive or change request workflows."
-            ),
         )
     
     member_name = member.name
