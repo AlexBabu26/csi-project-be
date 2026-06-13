@@ -1047,7 +1047,7 @@ async def update_officials(
 ):
     """Update unit officials."""
     cycle = await _get_wizard_cycle(db, current_user.id)
-    cycle_service.require_fresh_registration_for_direct_edits(cycle)
+    cycle_service.require_cycle_in_progress(cycle)
     return await add_unit_official(data, current_user, db)
 
 
