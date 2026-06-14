@@ -133,7 +133,10 @@ class YuvalokhamService:
         result = await db.execute(select(YMUser).where(YMUser.email == data.email))
         user = result.scalar_one_or_none()
         if not user or not verify_password(data.password, user.password_hash) or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="The username or password you entered is incorrect. Please try again.",
+            )
 
         # Revoke old refresh tokens
         old_tokens = await db.execute(

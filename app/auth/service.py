@@ -72,7 +72,7 @@ class AuthService:
             self.session.commit()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+                detail="The username or password you entered is incorrect. Please try again.",
             )
         
         # 2. SINGLE SESSION: Revoke all existing refresh tokens for this user

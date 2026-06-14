@@ -1344,13 +1344,17 @@ async def list_registration_payments(
 @router.post("/registration-payments/{payment_id}/approve", response_model=dict)
 async def approve_registration_payment(
     payment_id: int,
-    balance_amount: int = Body(..., embed=True),
+    paid_amount: int = Body(..., embed=True),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Approve a unit registration payment proof submission."""
-    if balance_amount < 0:
-        raise HTTPException(status_code=400, detail="Balance amount cannot be negative")
+    """Approve a unit registration payment proof submission.
+
+    Admin enters the amount paid in this proof; remaining balance is derived as
+    total_amount - paid_amount. Print form unlocks for the unit once balance is 0.
+    """
+    if paid_amount < 0:
+        raise HTTPException(status_code=400, detail="Paid amount cannot be negative")
 
     stmt = select(UnitRegistrationPayment).where(UnitRegistrationPayment.id == payment_id)
     result = await db.execute(stmt)
@@ -1359,11 +1363,19 @@ async def approve_registration_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment submission not found")
 
-    if payment.total_amount is not None and balance_amount > payment.total_amount:
+    if payment.total_amount is None:
         raise HTTPException(
             status_code=400,
-            detail="Balance amount cannot exceed the registration total",
+            detail="Payment total is unknown; cannot approve with a paid amount",
         )
+
+    if paid_amount > payment.total_amount:
+        raise HTTPException(
+            status_code=400,
+            detail="Paid amount cannot exceed the registration total",
+        )
+
+    balance_amount = payment.total_amount - paid_amount
 
     payment.status = PaymentProofStatus.APPROVED
     payment.balance_amount = balance_amount
@@ -1375,6 +1387,7 @@ async def approve_registration_payment(
     return {
         "message": "Payment approved successfully",
         "id": payment_id,
+        "paid_amount": paid_amount,
         "balance_amount": balance_amount,
     }
 
