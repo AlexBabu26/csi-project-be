@@ -232,7 +232,7 @@ async def save_unit_details(
 ):
     """Save unit details and president information."""
     cycle = await _get_wizard_cycle(db, current_user.id)
-    cycle_service.require_fresh_registration_for_direct_edits(cycle)
+    cycle_service.require_cycle_in_progress(cycle)
     current_year = await cycle_service.get_current_registration_year(db)
 
     # Create or get unit details
@@ -1216,8 +1216,8 @@ async def submit_payment_proof(
 ):
     """
     Upload a payment proof file for the unit registration fee.
-    Creates a new submission with PENDING status even if a previous one exists
-    (allows partial proofs and re-uploads after rejection).
+    Only one pending submission is allowed per registration cycle at a time.
+    Re-uploads are allowed after the admin approves or rejects the current proof.
     """
     cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
     if cycle is None or cycle.status != cycle_service.REGISTRATION_COMPLETED:
@@ -1230,6 +1230,12 @@ async def submit_payment_proof(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Payment for this registration year has already been fully approved.",
+        )
+
+    if await cycle_service.cycle_has_pending_payment(db, cycle.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A payment proof is already awaiting admin review. Please wait for approval or rejection before submitting another.",
         )
 
     # Upload file to B2

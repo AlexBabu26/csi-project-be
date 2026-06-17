@@ -1350,8 +1350,9 @@ async def approve_registration_payment(
 ):
     """Approve a unit registration payment proof submission.
 
-    Admin enters the amount paid in this proof; remaining balance is derived as
-    total_amount - paid_amount. Print form unlocks for the unit once balance is 0.
+    Admin enters the amount paid in this proof; remaining balance is derived from
+    the outstanding balance after prior approved proofs, not the full registration
+    total. Print form unlocks for the unit once balance is 0.
     """
     if paid_amount < 0:
         raise HTTPException(status_code=400, detail="Paid amount cannot be negative")
@@ -1369,13 +1370,33 @@ async def approve_registration_payment(
             detail="Payment total is unknown; cannot approve with a paid amount",
         )
 
-    if paid_amount > payment.total_amount:
+    prior_stmt = (
+        select(UnitRegistrationPayment)
+        .where(
+            UnitRegistrationPayment.registered_user_id == payment.registered_user_id,
+            UnitRegistrationPayment.registration_cycle_id == payment.registration_cycle_id,
+            UnitRegistrationPayment.status == PaymentProofStatus.APPROVED,
+            UnitRegistrationPayment.id != payment.id,
+        )
+        .order_by(UnitRegistrationPayment.submitted_at.asc())
+    )
+    prior_result = await db.execute(prior_stmt)
+    prior_approved = list(prior_result.scalars().all())
+
+    if prior_approved:
+        current_balance = prior_approved[-1].balance_amount
+        if current_balance is None:
+            current_balance = payment.total_amount
+    else:
+        current_balance = payment.total_amount
+
+    if paid_amount > current_balance:
         raise HTTPException(
             status_code=400,
-            detail="Paid amount cannot exceed the registration total",
+            detail="Paid amount cannot exceed the remaining balance",
         )
 
-    balance_amount = payment.total_amount - paid_amount
+    balance_amount = max(0, current_balance - paid_amount)
 
     payment.status = PaymentProofStatus.APPROVED
     payment.balance_amount = balance_amount

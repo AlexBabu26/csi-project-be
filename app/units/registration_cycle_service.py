@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.models import SiteSettings
@@ -322,3 +322,15 @@ async def cycle_is_fully_paid(db: AsyncSession, cycle_id: int) -> bool:
         return False
     latest_approved = approved_payments[-1]
     return latest_approved.balance_amount in (None, 0)
+
+
+async def cycle_has_pending_payment(db: AsyncSession, cycle_id: int) -> bool:
+    result = await db.execute(
+        select(func.count())
+        .select_from(UnitRegistrationPayment)
+        .where(
+            UnitRegistrationPayment.registration_cycle_id == cycle_id,
+            UnitRegistrationPayment.status == PaymentProofStatus.PENDING,
+        )
+    )
+    return (result.scalar() or 0) > 0
