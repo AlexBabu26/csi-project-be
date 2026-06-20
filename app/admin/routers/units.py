@@ -299,6 +299,8 @@ async def list_all_units(
             cycles_by_user[cycle.registered_user_id] = cycle
 
     payment_status_by_user: dict[int, str] = {}
+    payment_fully_approved_by_user: dict[int, bool] = {}
+    payment_reviewed_at_by_user: dict[int, Optional[datetime]] = {}
     if user_ids:
         payments_result = await db.execute(
             select(UnitRegistrationPayment).where(
@@ -306,11 +308,12 @@ async def list_all_units(
             )
         )
         payments = list(payments_result.scalars().all())
-        cycle_ids = {c.id for c in cycles_by_user.values()}
         for user_id in user_ids:
             cycle = cycles_by_user.get(user_id)
             if not cycle:
                 payment_status_by_user[user_id] = "not_submitted"
+                payment_fully_approved_by_user[user_id] = False
+                payment_reviewed_at_by_user[user_id] = None
                 continue
             user_payments = sorted(
                 [p for p in payments if p.registration_cycle_id == cycle.id],
@@ -318,12 +321,33 @@ async def list_all_units(
             )
             if not user_payments:
                 payment_status_by_user[user_id] = "not_submitted"
-            elif any(p.status == PaymentProofStatus.APPROVED for p in user_payments):
-                payment_status_by_user[user_id] = "approved"
+                payment_fully_approved_by_user[user_id] = False
+                payment_reviewed_at_by_user[user_id] = None
+                continue
+
+            approved_payments = [
+                p for p in user_payments if p.status == PaymentProofStatus.APPROVED
+            ]
+            if approved_payments:
+                latest_approved = approved_payments[-1]
+                payment_reviewed_at_by_user[user_id] = latest_approved.reviewed_at
+                if (
+                    latest_approved.balance_amount is not None
+                    and latest_approved.balance_amount > 0
+                ):
+                    payment_status_by_user[user_id] = "partial"
+                    payment_fully_approved_by_user[user_id] = False
+                else:
+                    payment_status_by_user[user_id] = "approved"
+                    payment_fully_approved_by_user[user_id] = True
             elif user_payments[-1].status == PaymentProofStatus.REJECTED:
                 payment_status_by_user[user_id] = "rejected"
+                payment_fully_approved_by_user[user_id] = False
+                payment_reviewed_at_by_user[user_id] = None
             else:
                 payment_status_by_user[user_id] = "pending"
+                payment_fully_approved_by_user[user_id] = False
+                payment_reviewed_at_by_user[user_id] = None
 
     member_counts_by_user: dict[int, int] = {}
     if user_ids:
@@ -356,6 +380,19 @@ async def list_all_units(
             if unit_data.registered_user_id in cycles_by_user
             else None,
             "payment_status": payment_status_by_user.get(unit_data.registered_user_id, "not_submitted"),
+            "payment_fully_approved": payment_fully_approved_by_user.get(
+                unit_data.registered_user_id, False
+            ),
+            "can_complete_registration": cycle_service.can_admin_complete_registration(
+                cycles_by_user.get(unit_data.registered_user_id),
+                payment_fully_approved=payment_fully_approved_by_user.get(
+                    unit_data.registered_user_id, False
+                ),
+                current_registration_year=current_year,
+                latest_payment_reviewed_at=payment_reviewed_at_by_user.get(
+                    unit_data.registered_user_id
+                ),
+            ),
         }
         for unit_data in units_data
     ]
@@ -1672,6 +1709,37 @@ async def export_unit_data(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/{user_id}/complete-registration", response_model=dict)
+async def complete_unit_registration(
+    user_id: int,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Mark a unit's current-season registration cycle as completed after admin approval."""
+    cycle = await cycle_service.admin_complete_registration(db, user_id)
+    return {
+        "message": "Registration marked as completed.",
+        "user_id": user_id,
+        "registration_year": cycle.registration_year,
+        "status": cycle.status,
+    }
+
+
+@router.post("/bulk-complete-legacy", response_model=dict)
+async def bulk_complete_legacy_registrations(
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Bulk-mark older-season registration cycles as completed (no admin approval)."""
+    updated = await cycle_service.bulk_complete_legacy_registrations(db, dry_run=False)
+    clear_cache("admin_dashboard")
+    return {
+        "message": "Legacy registration cycles updated.",
+        "updated_count": len(updated),
+        "updated": updated,
+    }
 
 
 @router.get("/{unit_id}", response_model=dict)

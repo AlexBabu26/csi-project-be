@@ -1316,21 +1316,60 @@ async def get_officials_change_requests(
     db: AsyncSession,
     user_id: Optional[int] = None,
     status_filter: Optional[RequestStatus] = None,
-) -> List[UnitOfficialsChangeRequest]:
+) -> List[Dict[str, Any]]:
     """Get list of officials change requests, optionally filtered."""
-    stmt = select(UnitOfficialsChangeRequest)
-    
+    stmt = (
+        select(UnitOfficialsChangeRequest, UnitName.name.label("unit_name"))
+        .join(UnitOfficials, UnitOfficialsChangeRequest.unit_official_id == UnitOfficials.id)
+        .join(CustomUser, UnitOfficials.registered_user_id == CustomUser.id)
+        .outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
+    )
+
     if user_id:
-        # Join with UnitOfficials to filter by user
-        stmt = stmt.join(UnitOfficials, UnitOfficialsChangeRequest.unit_official_id == UnitOfficials.id)
         stmt = stmt.where(UnitOfficials.registered_user_id == user_id)
     if status_filter:
         stmt = stmt.where(UnitOfficialsChangeRequest.status == status_filter)
-    
+
     stmt = stmt.order_by(UnitOfficialsChangeRequest.created_at.desc())
-    
+
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = result.all()
+
+    return [
+        {
+            "id": req.id,
+            "unit_official_id": req.unit_official_id,
+            "reason": req.reason,
+            "president_designation": req.president_designation,
+            "president_name": req.president_name,
+            "president_phone": req.president_phone,
+            "original_president_designation": req.original_president_designation,
+            "original_president_name": req.original_president_name,
+            "original_president_phone": req.original_president_phone,
+            "vice_president_name": req.vice_president_name,
+            "vice_president_phone": req.vice_president_phone,
+            "original_vice_president_name": req.original_vice_president_name,
+            "original_vice_president_phone": req.original_vice_president_phone,
+            "secretary_name": req.secretary_name,
+            "secretary_phone": req.secretary_phone,
+            "original_secretary_name": req.original_secretary_name,
+            "original_secretary_phone": req.original_secretary_phone,
+            "joint_secretary_name": req.joint_secretary_name,
+            "joint_secretary_phone": req.joint_secretary_phone,
+            "original_joint_secretary_name": req.original_joint_secretary_name,
+            "original_joint_secretary_phone": req.original_joint_secretary_phone,
+            "treasurer_name": req.treasurer_name,
+            "treasurer_phone": req.treasurer_phone,
+            "original_treasurer_name": req.original_treasurer_name,
+            "original_treasurer_phone": req.original_treasurer_phone,
+            "proof": req.proof,
+            "status": req.status,
+            "created_at": req.created_at,
+            "updated_at": req.updated_at,
+            "unit_name": unit_name,
+        }
+        for req, unit_name in rows
+    ]
 
 
 async def get_councilor_change_requests(
@@ -1695,45 +1734,47 @@ async def get_unit_my_requests(
             "proof": req.proof,
         }
 
-    def _serialize_officials(req: UnitOfficialsChangeRequest) -> Dict[str, Any]:
+    def _serialize_officials(req: Dict[str, Any]) -> Dict[str, Any]:
+        status = req["status"]
+        created_at = req["created_at"]
         return {
-            "id": req.id,
-            "createdAt": req.created_at.isoformat(),
+            "id": req["id"],
+            "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
             "unitId": user_id,
-            "unitName": unit_name or "",
+            "unitName": req.get("unit_name") or unit_name or "",
             "originalOfficials": {
-                "presidentDesignation": req.original_president_designation,
-                "presidentName": req.original_president_name or "",
-                "presidentPhone": req.original_president_phone or "",
-                "vicePresidentName": req.original_vice_president_name or "",
-                "vicePresidentPhone": req.original_vice_president_phone or "",
-                "secretaryName": req.original_secretary_name or "",
-                "secretaryPhone": req.original_secretary_phone or "",
-                "jointSecretaryName": req.original_joint_secretary_name or "",
-                "jointSecretaryPhone": req.original_joint_secretary_phone or "",
-                "treasurerName": req.original_treasurer_name or "",
-                "treasurerPhone": req.original_treasurer_phone or "",
+                "presidentDesignation": req.get("original_president_designation"),
+                "presidentName": req.get("original_president_name") or "",
+                "presidentPhone": req.get("original_president_phone") or "",
+                "vicePresidentName": req.get("original_vice_president_name") or "",
+                "vicePresidentPhone": req.get("original_vice_president_phone") or "",
+                "secretaryName": req.get("original_secretary_name") or "",
+                "secretaryPhone": req.get("original_secretary_phone") or "",
+                "jointSecretaryName": req.get("original_joint_secretary_name") or "",
+                "jointSecretaryPhone": req.get("original_joint_secretary_phone") or "",
+                "treasurerName": req.get("original_treasurer_name") or "",
+                "treasurerPhone": req.get("original_treasurer_phone") or "",
             },
             "requestedChanges": {
                 k: v
                 for k, v in {
-                    "presidentDesignation": req.president_designation,
-                    "presidentName": req.president_name,
-                    "presidentPhone": req.president_phone,
-                    "vicePresidentName": req.vice_president_name,
-                    "vicePresidentPhone": req.vice_president_phone,
-                    "secretaryName": req.secretary_name,
-                    "secretaryPhone": req.secretary_phone,
-                    "jointSecretaryName": req.joint_secretary_name,
-                    "jointSecretaryPhone": req.joint_secretary_phone,
-                    "treasurerName": req.treasurer_name,
-                    "treasurerPhone": req.treasurer_phone,
+                    "presidentDesignation": req.get("president_designation"),
+                    "presidentName": req.get("president_name"),
+                    "presidentPhone": req.get("president_phone"),
+                    "vicePresidentName": req.get("vice_president_name"),
+                    "vicePresidentPhone": req.get("vice_president_phone"),
+                    "secretaryName": req.get("secretary_name"),
+                    "secretaryPhone": req.get("secretary_phone"),
+                    "jointSecretaryName": req.get("joint_secretary_name"),
+                    "jointSecretaryPhone": req.get("joint_secretary_phone"),
+                    "treasurerName": req.get("treasurer_name"),
+                    "treasurerPhone": req.get("treasurer_phone"),
                 }.items()
                 if v is not None
             },
-            "reason": req.reason,
-            "status": req.status.value,
-            "proof": req.proof,
+            "reason": req["reason"],
+            "status": status.value if hasattr(status, "value") else status,
+            "proof": req.get("proof"),
         }
 
     def _serialize_councilor(req: UnitCouncilorChangeRequest) -> Dict[str, Any]:

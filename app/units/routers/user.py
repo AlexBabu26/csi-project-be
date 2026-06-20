@@ -584,9 +584,9 @@ async def complete_declaration(
     unit_fee, member_fee = await _get_unit_registration_fees(db)
     total_fee = unit_fee + (member_count * member_fee)
 
-    await cycle_service.complete_cycle(db, cycle, member_count, total_fee)
+    await cycle_service.submit_declaration(db, cycle, member_count, total_fee)
     
-    return {"message": "Registration completed successfully"}
+    return {"message": "Declaration submitted successfully"}
 
 
 @router.get("/archived-members/recent", response_model=RecentArchivedMembersResponse)
@@ -1220,10 +1220,13 @@ async def submit_payment_proof(
     Re-uploads are allowed after the admin approves or rejects the current proof.
     """
     cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
-    if cycle is None or cycle.status != cycle_service.REGISTRATION_COMPLETED:
+    if cycle is None or cycle.status not in (
+        cycle_service.DECLARATION_SUBMITTED,
+        cycle_service.REGISTRATION_COMPLETED,
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration must be completed before submitting payment.",
+            detail="Submit the registration declaration before uploading payment proof.",
         )
 
     if await cycle_service.cycle_is_fully_paid(db, cycle.id):

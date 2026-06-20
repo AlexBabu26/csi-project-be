@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.models import SiteSettings
-from app.auth.models import UnitDetails, UnitOfficials
+from app.auth.models import UnitDetails, UnitOfficials, UnitMembers
 from app.units.models import (
     PaymentProofStatus,
     UnitRegistrationCycle,
@@ -16,6 +16,7 @@ from app.units.models import (
 )
 
 REGISTRATION_COMPLETED = "Registration Completed"
+DECLARATION_SUBMITTED = "Declaration Submitted"
 
 CHANGE_REQUEST_REQUIRED_MSG = (
     "This update must be submitted as a change request. "
@@ -189,6 +190,11 @@ def require_cycle_in_progress(cycle: UnitRegistrationCycle) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration for this year is complete. Use change request workflows for updates.",
         )
+    if cycle.status == DECLARATION_SUBMITTED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Declaration has been submitted. Awaiting admin completion of registration.",
+        )
 
 
 def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) -> None:
@@ -239,6 +245,19 @@ async def update_cycle_status(
     await db.commit()
 
 
+async def submit_declaration(
+    db: AsyncSession,
+    cycle: UnitRegistrationCycle,
+    member_count: int,
+    total_fee: int,
+) -> None:
+    """Record unit declaration submission; admin completes the cycle later."""
+    cycle.status = DECLARATION_SUBMITTED
+    cycle.member_count_at_submit = member_count
+    cycle.total_fee_at_submit = total_fee
+    await db.commit()
+
+
 async def complete_cycle(
     db: AsyncSession,
     cycle: UnitRegistrationCycle,
@@ -250,6 +269,76 @@ async def complete_cycle(
     cycle.total_fee_at_submit = total_fee
     cycle.completed_at = datetime.utcnow()
 
+    await _sync_unit_details_after_completion(db, cycle, member_count)
+
+    await db.commit()
+
+
+async def resolve_cycle_submission_data(
+    db: AsyncSession,
+    cycle: UnitRegistrationCycle,
+) -> tuple[int, int]:
+    """Return member count and total fee from cycle snapshot or current unit data."""
+    if cycle.member_count_at_submit is not None and cycle.total_fee_at_submit is not None:
+        return cycle.member_count_at_submit, cycle.total_fee_at_submit
+
+    member_count_result = await db.execute(
+        select(func.count())
+        .select_from(UnitMembers)
+        .where(UnitMembers.registered_user_id == cycle.registered_user_id)
+    )
+    member_count = member_count_result.scalar() or 0
+    settings = await get_site_settings(db)
+    unit_fee = (
+        settings.unit_registration_fee
+        if settings and settings.unit_registration_fee is not None
+        else 100
+    )
+    member_fee = (
+        settings.unit_member_fee
+        if settings and settings.unit_member_fee is not None
+        else 10
+    )
+    return member_count, unit_fee + (member_count * member_fee)
+
+
+def can_admin_complete_registration(
+    cycle: Optional[UnitRegistrationCycle],
+    *,
+    payment_fully_approved: bool,
+    current_registration_year: int,
+    latest_payment_reviewed_at: Optional[datetime] = None,
+) -> bool:
+    """
+    Whether admin may finalize a registration cycle via the admin UI.
+
+    Current season: all paid registrations require admin approval before they are
+    considered fully complete (including legacy auto-completed cycles).
+
+    Older seasons are legacy data and are handled by bulk migration scripts instead.
+    """
+    if cycle is None:
+        return False
+    if cycle.registration_year != current_registration_year:
+        return False
+    if not payment_fully_approved:
+        return False
+
+    if cycle.status == REGISTRATION_COMPLETED:
+        if latest_payment_reviewed_at is None:
+            return False
+        if cycle.completed_at is None:
+            return True
+        return cycle.completed_at < latest_payment_reviewed_at
+
+    return True
+
+
+async def _sync_unit_details_after_completion(
+    db: AsyncSession,
+    cycle: UnitRegistrationCycle,
+    member_count: int,
+) -> None:
     details_result = await db.execute(
         select(UnitDetails).where(UnitDetails.registered_user_id == cycle.registered_user_id)
     )
@@ -258,7 +347,129 @@ async def complete_cycle(
         unit_details.registration_year = cycle.registration_year
         unit_details.number_of_unit_members = member_count
 
+
+async def confirm_current_season_registration(
+    db: AsyncSession,
+    cycle: UnitRegistrationCycle,
+    member_count: int,
+    total_fee: int,
+) -> None:
+    """Admin-confirm a current-season cycle (including legacy auto-completed ones)."""
+    cycle.status = REGISTRATION_COMPLETED
+    cycle.member_count_at_submit = member_count
+    cycle.total_fee_at_submit = total_fee
+    cycle.completed_at = datetime.utcnow()
+    await _sync_unit_details_after_completion(db, cycle, member_count)
     await db.commit()
+
+
+async def admin_complete_registration(
+    db: AsyncSession,
+    user_id: int,
+) -> UnitRegistrationCycle:
+    """Admin-finalize the current season once full payment is approved."""
+    current_year = await get_current_registration_year(db)
+    cycle = await get_cycle(db, user_id, current_year)
+    if cycle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No registration cycle found for the current season.",
+        )
+    if not await cycle_is_fully_paid(db, cycle.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Full payment must be approved before registration can be completed.",
+        )
+
+    reviewed_at = await get_latest_approved_payment_reviewed_at(db, cycle.id)
+    if (
+        cycle.status == REGISTRATION_COMPLETED
+        and cycle.completed_at is not None
+        and reviewed_at is not None
+        and cycle.completed_at >= reviewed_at
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration is already completed for this season.",
+        )
+
+    member_count, total_fee = await resolve_cycle_submission_data(db, cycle)
+    if cycle.status == REGISTRATION_COMPLETED:
+        await confirm_current_season_registration(db, cycle, member_count, total_fee)
+    else:
+        await complete_cycle(db, cycle, member_count, total_fee)
+    await db.refresh(cycle)
+    return cycle
+
+
+async def cycle_needs_legacy_bulk_completion(
+    cycle: UnitRegistrationCycle,
+    current_registration_year: int,
+) -> bool:
+    """Return True for older-season cycles that should be bulk-completed without admin approval."""
+    if cycle.registration_year >= current_registration_year:
+        return False
+
+    if (
+        cycle.status == REGISTRATION_COMPLETED
+        and cycle.completed_at is not None
+        and cycle.member_count_at_submit is not None
+        and cycle.total_fee_at_submit is not None
+    ):
+        return False
+
+    return True
+
+
+async def bulk_complete_legacy_registrations(
+    db: AsyncSession,
+    *,
+    dry_run: bool = False,
+) -> list[dict]:
+    """
+    Mark older-season registration cycles as completed without admin approval.
+
+    Current-season registrations always require per-unit admin approval in the UI.
+    """
+    current_year = await get_current_registration_year(db)
+    result = await db.execute(select(UnitRegistrationCycle))
+    cycles = list(result.scalars().all())
+
+    updated: list[dict] = []
+    for cycle in cycles:
+        if not cycle_needs_legacy_bulk_completion(cycle, current_year):
+            continue
+
+        member_count, total_fee = await resolve_cycle_submission_data(db, cycle)
+        old_status = cycle.status
+        if dry_run:
+            updated.append(
+                {
+                    "cycle_id": cycle.id,
+                    "user_id": cycle.registered_user_id,
+                    "registration_year": cycle.registration_year,
+                    "old_status": old_status,
+                    "new_status": REGISTRATION_COMPLETED,
+                    "member_count": member_count,
+                    "total_fee": total_fee,
+                }
+            )
+            continue
+
+        await complete_cycle(db, cycle, member_count, total_fee)
+        updated.append(
+            {
+                "cycle_id": cycle.id,
+                "user_id": cycle.registered_user_id,
+                "registration_year": cycle.registration_year,
+                "old_status": old_status,
+                "new_status": REGISTRATION_COMPLETED,
+                "member_count": member_count,
+                "total_fee": total_fee,
+            }
+        )
+
+    return updated
 
 
 async def get_payment_status_for_cycle(
@@ -306,6 +517,22 @@ async def get_payment_status_for_cycle(
         "latest_rejection_note": latest_rejection_note,
         "payments": items,
     }
+
+
+async def get_latest_approved_payment_reviewed_at(
+    db: AsyncSession,
+    cycle_id: int,
+) -> Optional[datetime]:
+    result = await db.execute(
+        select(UnitRegistrationPayment.reviewed_at)
+        .where(
+            UnitRegistrationPayment.registration_cycle_id == cycle_id,
+            UnitRegistrationPayment.status == PaymentProofStatus.APPROVED,
+        )
+        .order_by(UnitRegistrationPayment.submitted_at.asc())
+    )
+    reviewed_times = [row[0] for row in result.all() if row[0] is not None]
+    return reviewed_times[-1] if reviewed_times else None
 
 
 async def cycle_is_fully_paid(db: AsyncSession, cycle_id: int) -> bool:

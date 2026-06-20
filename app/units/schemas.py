@@ -277,6 +277,7 @@ class UnitOfficialsChangeRequestResponse(BaseModel):
     status: RequestStatus
     created_at: datetime
     updated_at: datetime
+    unit_name: Optional[str] = None
 
 
 # Unit Councilor Change Request Schemas
