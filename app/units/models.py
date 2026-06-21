@@ -8,6 +8,7 @@ from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.db import Base
+from app.auth.models import ResidenceLocation
 
 
 class RequestStatus(str, enum.Enum):
@@ -276,6 +277,16 @@ class UnitMemberAddRequest(Base):
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     proof: Mapped[Optional[str]] = mapped_column(String(500))  # File path
+    residence_location: Mapped[Optional[ResidenceLocation]] = mapped_column(
+        Enum(ResidenceLocation),
+        nullable=True,
+    )
+    residence_state_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("state.id"), nullable=True, index=True
+    )
+    residence_city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("city.id"), nullable=True, index=True
+    )
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )

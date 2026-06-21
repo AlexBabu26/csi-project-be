@@ -367,6 +367,9 @@ class UnitMemberAddRequestBase(BaseModel):
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: str = Field(..., min_length=1, max_length=10)
     reason: str = Field(..., min_length=10, max_length=5000)
+    residence_location: ResidenceLocation
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
 
     @field_validator("blood_group")
     @classmethod
@@ -374,6 +377,15 @@ class UnitMemberAddRequestBase(BaseModel):
         if v not in VALID_BLOOD_GROUPS:
             raise ValueError(f"Invalid blood group. Must be one of: {', '.join(sorted(VALID_BLOOD_GROUPS))}")
         return v
+
+    @model_validator(mode='after')
+    def validate_residence(self):
+        _validate_residence_fields(
+            self.residence_location,
+            self.residence_state_id,
+            self.residence_city_id,
+        )
+        return self
 
 
 class UnitMemberAddRequestCreate(UnitMemberAddRequestBase):
@@ -410,6 +422,12 @@ class UnitMemberAddRequestResponse(BaseModel):
     updated_at: datetime
     unit_name: Optional[str] = None
     username: Optional[str] = None
+    residence_location: Optional[ResidenceLocation] = None
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
+    residence_state_name: Optional[str] = None
+    residence_city_name: Optional[str] = None
+    residence_country_name: Optional[str] = None
 
 
 # Unit Details Schemas

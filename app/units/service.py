@@ -37,6 +37,7 @@ from app.units.schemas import (
     ArchivedMemberConcernRequestCreate,
 )
 from app.units import registration_cycle_service as cycle_service
+from app.units import residence_service
 
 
 # Unit Transfer Request Functions
@@ -1071,6 +1072,13 @@ async def create_member_add_request(
     Returns:
         Created add request
     """
+    residence_location, residence_state_id, residence_city_id = await residence_service.apply_residence_fields(
+        db,
+        residence_location=data.residence_location,
+        residence_state_id=data.residence_state_id,
+        residence_city_id=data.residence_city_id,
+    )
+
     add_request = UnitMemberAddRequest(
         registered_user_id=user_id,
         name=data.name,
@@ -1082,6 +1090,9 @@ async def create_member_add_request(
         reason=data.reason,
         proof=data.proof,
         status=RequestStatus.PENDING,
+        residence_location=residence_location,
+        residence_state_id=residence_state_id,
+        residence_city_id=residence_city_id,
     )
     
     db.add(add_request)
@@ -1136,6 +1147,9 @@ async def approve_member_add_request(
         qualification=add_request.qualification,
         blood_group=add_request.blood_group,
         added_registration_cycle_id=cycle.id if cycle else None,
+        residence_location=add_request.residence_location,
+        residence_state_id=add_request.residence_state_id,
+        residence_city_id=add_request.residence_city_id,
     )
 
     db.add(new_member)
@@ -1525,6 +1539,11 @@ def _member_add_request_dict(
         "updated_at": req.updated_at,
         "unit_name": unit_name,
         "username": username,
+        "residence_location": (
+            req.residence_location.value if req.residence_location else None
+        ),
+        "residence_state_id": req.residence_state_id,
+        "residence_city_id": req.residence_city_id,
     }
 
 
@@ -1984,6 +2003,9 @@ async def get_unit_my_requests(
             "reason": req["reason"],
             "status": status.value if hasattr(status, "value") else status,
             "proof": req.get("proof"),
+            "residenceLocation": req.get("residence_location"),
+            "residenceStateId": req.get("residence_state_id"),
+            "residenceCityId": req.get("residence_city_id"),
         }
 
     def _serialize_concern(req: Dict[str, Any]) -> Dict[str, Any]:

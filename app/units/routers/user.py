@@ -899,6 +899,9 @@ async def create_member_add_request(
     number: str = Form(...),
     blood_group: str = Form(...),
     reason: str = Form(...),
+    residence_location: str = Form(...),
+    residence_state_id: Optional[str] = Form(None),
+    residence_city_id: Optional[str] = Form(None),
     qualification: Optional[str] = Form(None),
     proof: Optional[UploadFile] = File(None, description="Proof document (PDF, PNG, JPG — max 5 MB)"),
     current_user: CustomUser = Depends(get_current_unit_user),
@@ -909,6 +912,17 @@ async def create_member_add_request(
     if proof and proof.filename:
         proof_path, _ = save_upload_file(proof, subdir="units/member-add-requests")
 
+    try:
+        residence_enum = ResidenceLocation(residence_location)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid residence location",
+        ) from exc
+
+    parsed_state_id = int(residence_state_id) if residence_state_id else None
+    parsed_city_id = int(residence_city_id) if residence_city_id else None
+
     data = UnitMemberAddRequestCreate(
         name=name,
         gender=gender,
@@ -918,6 +932,9 @@ async def create_member_add_request(
         reason=reason,
         qualification=qualification or None,
         proof=proof_path,
+        residence_location=residence_enum,
+        residence_state_id=parsed_state_id,
+        residence_city_id=parsed_city_id,
     )
     return await units_service.create_member_add_request(db, current_user.id, data)
 
