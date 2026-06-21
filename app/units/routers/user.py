@@ -1201,6 +1201,7 @@ async def get_payment_status(
     return {
         "overall_status": payment_data["overall_status"],
         "balance_amount": payment_data["balance_amount"],
+        "registration_total_amount": cycle.total_fee_at_submit,
         "latest_rejection_note": payment_data["latest_rejection_note"],
         "qr_url": qr_url,
         "registration_year": cycle.registration_year,

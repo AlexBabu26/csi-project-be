@@ -36,6 +36,7 @@ from app.units.schemas import (
     UnitMemberAddRequestCreate,
     ArchivedMemberConcernRequestCreate,
 )
+from app.units import registration_cycle_service as cycle_service
 
 
 # Unit Transfer Request Functions
@@ -1093,7 +1094,7 @@ async def create_member_add_request(
 async def approve_member_add_request(
     db: AsyncSession,
     request_id: int,
-) -> UnitMemberAddRequest:
+) -> Dict[str, Any]:
     """
     Approve a member add request and create the member.
     
@@ -1123,7 +1124,9 @@ async def approve_member_add_request(
             detail="Add request not found or already processed"
         )
     
-    # Create new member
+    current_year = await cycle_service.get_current_registration_year(db)
+    cycle = await cycle_service.get_cycle(db, add_request.registered_user_id, current_year)
+
     new_member = UnitMembers(
         registered_user_id=add_request.registered_user_id,
         name=add_request.name,
@@ -1132,23 +1135,30 @@ async def approve_member_add_request(
         number=add_request.number,
         qualification=add_request.qualification,
         blood_group=add_request.blood_group,
+        added_registration_cycle_id=cycle.id if cycle else None,
     )
-    
+
     db.add(new_member)
-    
-    # Update status
     add_request.status = RequestStatus.APPROVED
-    
+
+    await cycle_service.adjust_fee_for_member_delta(
+        db,
+        registered_user_id=add_request.registered_user_id,
+        delta_members=1,
+    )
+
     await db.commit()
     await db.refresh(add_request)
-    
-    return add_request
+
+    labels = await _lookup_unit_labels_for_users(db, [add_request.registered_user_id])
+    unit_name, username = labels.get(add_request.registered_user_id, (None, None))
+    return _member_add_request_dict(add_request, unit_name=unit_name, username=username)
 
 
 async def reject_member_add_request(
     db: AsyncSession,
     request_id: int,
-) -> UnitMemberAddRequest:
+) -> Dict[str, Any]:
     """
     Reject a member add request.
     
@@ -1178,8 +1188,10 @@ async def reject_member_add_request(
     
     await db.commit()
     await db.refresh(add_request)
-    
-    return add_request
+
+    labels = await _lookup_unit_labels_for_users(db, [add_request.registered_user_id])
+    unit_name, username = labels.get(add_request.registered_user_id, (None, None))
+    return _member_add_request_dict(add_request, unit_name=unit_name, username=username)
 
 
 # Archive Member Function
@@ -1393,23 +1405,78 @@ async def get_councilor_change_requests(
     return list(result.scalars().all())
 
 
+def _member_add_request_dict(
+    req: UnitMemberAddRequest,
+    *,
+    unit_name: Optional[str] = None,
+    username: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": req.id,
+        "registered_user_id": req.registered_user_id,
+        "name": req.name,
+        "gender": req.gender,
+        "dob": req.dob,
+        "number": req.number,
+        "qualification": req.qualification,
+        "blood_group": req.blood_group,
+        "reason": req.reason,
+        "proof": req.proof,
+        "status": req.status,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+        "unit_name": unit_name,
+        "username": username,
+    }
+
+
+async def _lookup_unit_labels_for_users(
+    db: AsyncSession,
+    user_ids: List[int],
+) -> Dict[int, tuple[Optional[str], Optional[str]]]:
+    if not user_ids:
+        return {}
+    result = await db.execute(
+        select(CustomUser.id, CustomUser.username, UnitName.name)
+        .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        .where(CustomUser.id.in_(user_ids))
+    )
+    return {
+        row[0]: (row[2], row[1])
+        for row in result.all()
+    }
+
+
 async def get_member_add_requests(
     db: AsyncSession,
     user_id: Optional[int] = None,
     status_filter: Optional[RequestStatus] = None,
-) -> List[UnitMemberAddRequest]:
-    """Get list of member add requests, optionally filtered."""
+) -> List[Dict[str, Any]]:
+    """Get list of member add requests with unit labels, optionally filtered."""
     stmt = select(UnitMemberAddRequest)
-    
+
     if user_id:
         stmt = stmt.where(UnitMemberAddRequest.registered_user_id == user_id)
     if status_filter:
         stmt = stmt.where(UnitMemberAddRequest.status == status_filter)
-    
+
     stmt = stmt.order_by(UnitMemberAddRequest.created_at.desc())
-    
+
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    requests = list(result.scalars().all())
+    labels = await _lookup_unit_labels_for_users(
+        db,
+        list({req.registered_user_id for req in requests}),
+    )
+
+    return [
+        _member_add_request_dict(
+            req,
+            unit_name=labels.get(req.registered_user_id, (None, None))[0],
+            username=labels.get(req.registered_user_id, (None, None))[1],
+        )
+        for req in requests
+    ]
 
 
 def _normalize_gender(gender: Optional[str]) -> Optional[str]:
@@ -1793,21 +1860,23 @@ async def get_unit_my_requests(
             "proof": req.proof,
         }
 
-    def _serialize_member_add(req: UnitMemberAddRequest) -> Dict[str, Any]:
+    def _serialize_member_add(req: Dict[str, Any]) -> Dict[str, Any]:
+        created_at = req["created_at"]
+        status = req["status"]
         return {
-            "id": req.id,
-            "createdAt": req.created_at.isoformat(),
-            "unitId": req.registered_user_id,
-            "unitName": unit_name or "",
-            "name": req.name,
-            "gender": req.gender,
-            "number": req.number,
-            "dob": req.dob.isoformat(),
-            "qualification": req.qualification,
-            "bloodGroup": req.blood_group,
-            "reason": req.reason,
-            "status": req.status.value,
-            "proof": req.proof,
+            "id": req["id"],
+            "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "unitId": req["registered_user_id"],
+            "unitName": req.get("unit_name") or unit_name or "",
+            "name": req["name"],
+            "gender": req["gender"],
+            "number": req["number"],
+            "dob": req["dob"].isoformat() if hasattr(req["dob"], "isoformat") else req["dob"],
+            "qualification": req.get("qualification"),
+            "bloodGroup": req.get("blood_group"),
+            "reason": req["reason"],
+            "status": status.value if hasattr(status, "value") else status,
+            "proof": req.get("proof"),
         }
 
     def _serialize_concern(req: Dict[str, Any]) -> Dict[str, Any]:

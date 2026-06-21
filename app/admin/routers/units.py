@@ -1015,6 +1015,9 @@ async def restore_archived_member(
     if not archived:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archived member not found")
 
+    current_year = await cycle_service.get_current_registration_year(db)
+    cycle = await cycle_service.get_cycle(db, archived.registered_user_id, current_year)
+
     active_member = UnitMembers(
         registered_user_id=archived.registered_user_id,
         name=archived.name,
@@ -1023,8 +1026,14 @@ async def restore_archived_member(
         number=archived.number,
         qualification=archived.qualification,
         blood_group=archived.blood_group,
+        added_registration_cycle_id=cycle.id if cycle else None,
     )
     db.add(active_member)
+    await cycle_service.adjust_fee_for_member_delta(
+        db,
+        registered_user_id=archived.registered_user_id,
+        delta_members=1,
+    )
     await db.delete(archived)
     await db.commit()
 
@@ -1369,6 +1378,7 @@ async def list_registration_payments(
             "file_url": get_public_file_url(p.file_path) if p.file_path else None,
             "total_amount": p.total_amount,
             "balance_amount": p.balance_amount,
+            "registration_total_amount": cycle.total_fee_at_submit if cycle else None,
             "status": p.status.value,
             "rejection_note": p.rejection_note,
             "submitted_at": p.submitted_at.isoformat(),

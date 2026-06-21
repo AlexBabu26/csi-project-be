@@ -561,3 +561,81 @@ async def cycle_has_pending_payment(db: AsyncSession, cycle_id: int) -> bool:
         )
     )
     return (result.scalar() or 0) > 0
+
+
+async def _get_member_fee(db: AsyncSession) -> int:
+    settings = await get_site_settings(db)
+    if settings and settings.unit_member_fee is not None:
+        return settings.unit_member_fee
+    return 10
+
+
+async def _get_cycle_payments(
+    db: AsyncSession,
+    cycle_id: int,
+) -> list[UnitRegistrationPayment]:
+    result = await db.execute(
+        select(UnitRegistrationPayment)
+        .where(UnitRegistrationPayment.registration_cycle_id == cycle_id)
+        .order_by(UnitRegistrationPayment.submitted_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def adjust_fee_for_member_delta(
+    db: AsyncSession,
+    *,
+    registered_user_id: int,
+    delta_members: int,
+) -> bool:
+    """
+    After a post-declaration member add, update the cycle fee snapshot and
+    outstanding payment balance for the current season.
+
+    Only applies when declaration has already been submitted. Member removals
+    are not auto-refunded (delta_members must be positive).
+    """
+    if delta_members <= 0:
+        return False
+
+    current_year = await get_current_registration_year(db)
+    cycle = await get_cycle(db, registered_user_id, current_year)
+    if cycle is None or cycle.status not in (DECLARATION_SUBMITTED, REGISTRATION_COMPLETED):
+        return False
+
+    member_fee = await _get_member_fee(db)
+    fee_delta = delta_members * member_fee
+    if fee_delta <= 0:
+        return False
+
+    if cycle.member_count_at_submit is not None and cycle.total_fee_at_submit is not None:
+        cycle.member_count_at_submit += delta_members
+        cycle.total_fee_at_submit += fee_delta
+    else:
+        member_count_result = await db.execute(
+            select(func.count())
+            .select_from(UnitMembers)
+            .where(UnitMembers.registered_user_id == registered_user_id)
+        )
+        member_count = member_count_result.scalar() or 0
+        settings = await get_site_settings(db)
+        unit_fee = (
+            settings.unit_registration_fee
+            if settings and settings.unit_registration_fee is not None
+            else 100
+        )
+        cycle.member_count_at_submit = member_count
+        cycle.total_fee_at_submit = unit_fee + (member_count * member_fee)
+
+    payments = await _get_cycle_payments(db, cycle.id)
+    approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+    if approved:
+        latest = approved[-1]
+        latest.total_amount = (latest.total_amount or cycle.total_fee_at_submit or 0) + fee_delta
+        latest.balance_amount = (latest.balance_amount or 0) + fee_delta
+    elif payments:
+        latest = payments[-1]
+        if latest.status == PaymentProofStatus.PENDING and latest.total_amount is not None:
+            latest.total_amount += fee_delta
+
+    return True

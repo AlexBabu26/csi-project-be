@@ -403,6 +403,8 @@ class UnitMemberAddRequestResponse(BaseModel):
     status: RequestStatus
     created_at: datetime
     updated_at: datetime
+    unit_name: Optional[str] = None
+    username: Optional[str] = None
 
 
 # Unit Details Schemas

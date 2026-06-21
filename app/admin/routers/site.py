@@ -227,8 +227,12 @@ def get_file(file_path: str):
             response['Body'],
             media_type=response.get('ContentType', 'application/octet-stream'),
             headers={
-                'Cache-Control': 'public, max-age=86400',  # Cache for 1 day
-                'Content-Length': str(response.get('ContentLength', 0))
+                'Cache-Control': 'public, max-age=86400',
+                'Content-Length': str(response.get('ContentLength', 0)),
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': '*',
+                'Vary': 'Origin',
             }
         )
     except ClientError as e:
