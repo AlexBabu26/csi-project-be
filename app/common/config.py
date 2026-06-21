@@ -6,7 +6,13 @@ from typing import List, Optional
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(
+        # Load standard .env first, then repo "env" file (local override).
+        env_file=(".env", "env"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     app_name: str = "CSI Kalamela FastAPI"
     debug: bool = False
@@ -22,10 +28,8 @@ class Settings(BaseSettings):
     #   postgresql+psycopg://user:pass@ep-xxx-pooler.region.aws.neon.tech/dbname?sslmode=require
     #
     # Note the "-pooler" suffix in the hostname for the pooled connection.
-    # database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/csi_kalamela"\
-    #PRODUCTION URL - Round Waterfall
-    # database_url: str = "postgresql+psycopg://neondb_owner:npg_mcp40TxrFHVC@ep-round-waterfall-a13doc66-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require"
-    database_url: str = "postgresql://neondb_owner:npg_mcp40TxrFHVC@ep-snowy-heart-a1z65pya-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require&channel_binding=require"
+    # Set via DATABASE_URL in .env or env (never commit real credentials here).
+    database_url: str = ""
     secret_key: str = "change-this-secret"
     access_token_expire_minutes: int = 15  # Short-lived access tokens
     refresh_token_expire_days: int = 7  # Long-lived refresh tokens

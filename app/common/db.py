@@ -20,6 +20,15 @@ from app.common.config import get_settings
 Base = declarative_base()
 
 
+def _normalize_async_database_url(url: str) -> str:
+    """Ensure async SQLAlchemy uses psycopg v3, not psycopg2."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
+
+
 @lru_cache(maxsize=1)
 def get_sync_engine():
     """
@@ -46,9 +55,9 @@ def get_async_engine():
     doesn't persist across function invocations.
     """
     settings = get_settings()
-    print("CONNECTED TO DATABASE:", settings.database_url)
+    async_url = _normalize_async_database_url(settings.database_url)
     return create_async_engine(
-        settings.database_url,
+        async_url,
         echo=settings.debug,
         poolclass=NullPool,  # No pooling - better for serverless
     )

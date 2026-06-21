@@ -170,15 +170,20 @@ async def get_application_form(
         number_of_fields = 5
 
     unit_name_str = None
+    clergy_district_name = None
     if current_user.unit_name_id:
         unit_name_result = await db.execute(
-            select(UnitName).where(UnitName.id == current_user.unit_name_id)
+            select(UnitName)
+            .options(selectinload(UnitName.district))
+            .where(UnitName.id == current_user.unit_name_id)
         )
         unit_name_obj = unit_name_result.scalar_one_or_none()
-        unit_name_str = unit_name_obj.name if unit_name_obj else None
+        if unit_name_obj:
+            unit_name_str = unit_name_obj.name
+            if unit_name_obj.district:
+                clergy_district_name = unit_name_obj.district.name
 
-    clergy_district_name = None
-    if current_user.clergy_district_id:
+    if not clergy_district_name and current_user.clergy_district_id:
         district_result = await db.execute(
             select(ClergyDistrict).where(ClergyDistrict.id == current_user.clergy_district_id)
         )
