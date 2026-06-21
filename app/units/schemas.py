@@ -208,6 +208,7 @@ class UnitMemberChangeRequestResponse(BaseModel):
     status: RequestStatus
     created_at: datetime
     updated_at: datetime
+    unit_name: Optional[str] = None
 
 
 # Unit Officials Change Request Schemas
@@ -317,6 +318,10 @@ class UnitCouncilorChangeRequestResponse(BaseModel):
     status: RequestStatus
     created_at: datetime
     updated_at: datetime
+    unit_id: Optional[int] = None
+    unit_name: Optional[str] = None
+    original_member_name: Optional[str] = None
+    new_member_name: Optional[str] = None
 
 
 # Unit Member Add Request Schemas

@@ -1303,25 +1303,60 @@ async def get_transfer_requests(
     ]
 
 
+def _member_change_request_dict(
+    req: UnitMemberChangeRequest,
+    *,
+    unit_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": req.id,
+        "unit_member_id": req.unit_member_id,
+        "reason": req.reason,
+        "name": req.name,
+        "gender": req.gender,
+        "dob": req.dob,
+        "blood_group": req.blood_group,
+        "qualification": req.qualification,
+        "original_name": req.original_name,
+        "original_gender": req.original_gender,
+        "original_dob": req.original_dob,
+        "original_blood_group": req.original_blood_group,
+        "original_qualification": req.original_qualification,
+        "proof": req.proof,
+        "status": req.status,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+        "unit_name": unit_name,
+    }
+
+
 async def get_member_change_requests(
     db: AsyncSession,
     user_id: Optional[int] = None,
     status_filter: Optional[RequestStatus] = None,
-) -> List[UnitMemberChangeRequest]:
+) -> List[Dict[str, Any]]:
     """Get list of member change requests, optionally filtered."""
-    stmt = select(UnitMemberChangeRequest)
-    
+    stmt = (
+        select(UnitMemberChangeRequest, UnitName.name.label("unit_name"))
+        .join(UnitMembers, UnitMemberChangeRequest.unit_member_id == UnitMembers.id)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
+    )
+
     if user_id:
-        # Join with UnitMembers to filter by user
-        stmt = stmt.join(UnitMembers, UnitMemberChangeRequest.unit_member_id == UnitMembers.id)
         stmt = stmt.where(UnitMembers.registered_user_id == user_id)
     if status_filter:
         stmt = stmt.where(UnitMemberChangeRequest.status == status_filter)
-    
+
     stmt = stmt.order_by(UnitMemberChangeRequest.created_at.desc())
-    
+
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = result.all()
+
+    return [
+        _member_change_request_dict(req, unit_name=unit_name)
+        for req, unit_name in rows
+    ]
 
 
 async def get_officials_change_requests(
@@ -1384,25 +1419,88 @@ async def get_officials_change_requests(
     ]
 
 
+def _councilor_change_request_dict(
+    req: UnitCouncilorChangeRequest,
+    *,
+    unit_id: Optional[int] = None,
+    unit_name: Optional[str] = None,
+    original_member_name: Optional[str] = None,
+    new_member_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": req.id,
+        "unit_councilor_id": req.unit_councilor_id,
+        "reason": req.reason,
+        "unit_member_id": req.unit_member_id,
+        "original_unit_member_id": req.original_unit_member_id,
+        "proof": req.proof,
+        "status": req.status,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+        "unit_id": unit_id,
+        "unit_name": unit_name,
+        "original_member_name": original_member_name,
+        "new_member_name": new_member_name,
+    }
+
+
 async def get_councilor_change_requests(
     db: AsyncSession,
     user_id: Optional[int] = None,
     status_filter: Optional[RequestStatus] = None,
-) -> List[UnitCouncilorChangeRequest]:
+) -> List[Dict[str, Any]]:
     """Get list of councilor change requests, optionally filtered."""
-    stmt = select(UnitCouncilorChangeRequest)
-    
+    stmt = (
+        select(
+            UnitCouncilorChangeRequest,
+            UnitName.name.label("unit_name"),
+            CustomUser.id.label("unit_id"),
+        )
+        .join(UnitCouncilor, UnitCouncilorChangeRequest.unit_councilor_id == UnitCouncilor.id)
+        .join(CustomUser, UnitCouncilor.registered_user_id == CustomUser.id)
+        .outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
+    )
+
     if user_id:
-        # Join with UnitCouncilor to filter by user
-        stmt = stmt.join(UnitCouncilor, UnitCouncilorChangeRequest.unit_councilor_id == UnitCouncilor.id)
         stmt = stmt.where(UnitCouncilor.registered_user_id == user_id)
     if status_filter:
         stmt = stmt.where(UnitCouncilorChangeRequest.status == status_filter)
-    
+
     stmt = stmt.order_by(UnitCouncilorChangeRequest.created_at.desc())
-    
+
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = result.all()
+
+    member_ids: set[int] = set()
+    for req, _, _ in rows:
+        if req.original_unit_member_id:
+            member_ids.add(req.original_unit_member_id)
+        if req.unit_member_id:
+            member_ids.add(req.unit_member_id)
+
+    member_names: Dict[int, str] = {}
+    if member_ids:
+        members_result = await db.execute(
+            select(UnitMembers.id, UnitMembers.name).where(UnitMembers.id.in_(member_ids))
+        )
+        member_names = {row[0]: row[1] for row in members_result.all()}
+
+    return [
+        _councilor_change_request_dict(
+            req,
+            unit_id=unit_id,
+            unit_name=unit_name,
+            original_member_name=(
+                member_names.get(req.original_unit_member_id)
+                if req.original_unit_member_id
+                else None
+            ),
+            new_member_name=(
+                member_names.get(req.unit_member_id) if req.unit_member_id else None
+            ),
+        )
+        for req, unit_name, unit_id in rows
+    ]
 
 
 def _member_add_request_dict(
@@ -1778,27 +1876,30 @@ async def get_unit_my_requests(
             "proof": req.get("proof"),
         }
 
-    def _serialize_member_info(req: UnitMemberChangeRequest) -> Dict[str, Any]:
+    def _serialize_member_info(req: Dict[str, Any]) -> Dict[str, Any]:
+        created_at = req["created_at"]
+        status = req["status"]
+        dob = req.get("dob")
         return {
-            "id": req.id,
-            "createdAt": req.created_at.isoformat(),
-            "memberId": req.unit_member_id,
-            "memberName": req.original_name or req.name or f"Member #{req.unit_member_id}",
-            "unitName": unit_name or "",
+            "id": req["id"],
+            "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "memberId": req["unit_member_id"],
+            "memberName": req.get("original_name") or req.get("name") or f"Member #{req['unit_member_id']}",
+            "unitName": req.get("unit_name") or unit_name or "",
             "changes": {
                 k: v
                 for k, v in {
-                    "name": req.name,
-                    "gender": req.gender,
-                    "dob": req.dob.isoformat() if req.dob else None,
-                    "bloodGroup": req.blood_group,
-                    "qualification": req.qualification,
+                    "name": req.get("name"),
+                    "gender": req.get("gender"),
+                    "dob": dob.isoformat() if hasattr(dob, "isoformat") else dob,
+                    "bloodGroup": req.get("blood_group"),
+                    "qualification": req.get("qualification"),
                 }.items()
                 if v is not None
             },
-            "reason": req.reason,
-            "status": req.status.value,
-            "proof": req.proof,
+            "reason": req["reason"],
+            "status": status.value if hasattr(status, "value") else status,
+            "proof": req.get("proof"),
         }
 
     def _serialize_officials(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -1844,20 +1945,26 @@ async def get_unit_my_requests(
             "proof": req.get("proof"),
         }
 
-    def _serialize_councilor(req: UnitCouncilorChangeRequest) -> Dict[str, Any]:
+    def _serialize_councilor(req: Dict[str, Any]) -> Dict[str, Any]:
+        created_at = req["created_at"]
+        status = req["status"]
+        original_member_id = req.get("original_unit_member_id") or 0
+        new_member_id = req.get("unit_member_id")
         return {
-            "id": req.id,
-            "createdAt": req.created_at.isoformat(),
-            "unitId": user_id,
-            "unitName": unit_name or "",
-            "councilorId": req.unit_councilor_id,
-            "originalMemberId": req.original_unit_member_id or 0,
-            "originalMemberName": f"Member #{req.original_unit_member_id or 0}",
-            "newMemberId": req.unit_member_id,
-            "newMemberName": f"Member #{req.unit_member_id}" if req.unit_member_id else None,
-            "reason": req.reason,
-            "status": req.status.value,
-            "proof": req.proof,
+            "id": req["id"],
+            "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "unitId": req.get("unit_id") or user_id,
+            "unitName": req.get("unit_name") or unit_name or "",
+            "councilorId": req["unit_councilor_id"],
+            "originalMemberId": original_member_id,
+            "originalMemberName": req.get("original_member_name") or f"Member #{original_member_id}",
+            "newMemberId": new_member_id,
+            "newMemberName": req.get("new_member_name") or (
+                f"Member #{new_member_id}" if new_member_id else None
+            ),
+            "reason": req["reason"],
+            "status": status.value if hasattr(status, "value") else status,
+            "proof": req.get("proof"),
         }
 
     def _serialize_member_add(req: Dict[str, Any]) -> Dict[str, Any]:
