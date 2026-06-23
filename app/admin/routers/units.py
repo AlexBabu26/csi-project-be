@@ -698,10 +698,17 @@ async def list_all_unit_officials(
     db: AsyncSession = Depends(get_async_db),
     page: int = 1,
     page_size: int = 50,
+    unit_id: Optional[int] = Query(None, description="Filter by registered unit user id"),
 ):
     """List all unit officials across all units with pagination."""
+    filters = []
+    if unit_id is not None:
+        filters.append(UnitOfficials.registered_user_id == unit_id)
+
     # Get total count
     count_stmt = select(func.count()).select_from(UnitOfficials)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar() or 0
     
     # Get paginated data
@@ -709,6 +716,8 @@ async def list_all_unit_officials(
     stmt = select(UnitOfficials).options(
         selectinload(UnitOfficials.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district)
     ).offset(offset).limit(page_size)
+    if filters:
+        stmt = stmt.where(*filters)
     result = await db.execute(stmt)
     officials_list = list(result.scalars().all())
     
@@ -743,10 +752,17 @@ async def list_all_unit_councilors(
     db: AsyncSession = Depends(get_async_db),
     page: int = 1,
     page_size: int = 50,
+    unit_id: Optional[int] = Query(None, description="Filter by registered unit user id"),
 ):
     """List all unit councilors across all units with pagination."""
+    filters = []
+    if unit_id is not None:
+        filters.append(UnitCouncilor.registered_user_id == unit_id)
+
     # Get total count
     count_stmt = select(func.count()).select_from(UnitCouncilor)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar() or 0
     
     # Get paginated data
@@ -755,6 +771,8 @@ async def list_all_unit_councilors(
         selectinload(UnitCouncilor.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
         selectinload(UnitCouncilor.unit_member)
     ).offset(offset).limit(page_size)
+    if filters:
+        stmt = stmt.where(*filters)
     result = await db.execute(stmt)
     councilors_list = list(result.scalars().all())
     
@@ -1791,7 +1809,11 @@ async def view_unit_details(
     officials = result.scalar_one_or_none()
     
     # Get councilors
-    stmt = select(UnitCouncilor).where(UnitCouncilor.registered_user_id == unit_id)
+    stmt = (
+        select(UnitCouncilor)
+        .where(UnitCouncilor.registered_user_id == unit_id)
+        .options(selectinload(UnitCouncilor.unit_member))
+    )
     result = await db.execute(stmt)
     councilors = list(result.scalars().all())
     
@@ -1836,11 +1858,34 @@ async def view_unit_details(
     
     # Convert councilors to list of dicts
     councilors_list = [
-        {"id": c.id, "unit_member_id": c.unit_member_id}
+        {
+            "id": c.id,
+            "unit_member_id": c.unit_member_id,
+            "member_name": c.unit_member.name if c.unit_member else None,
+            "member_phone": c.unit_member.number if c.unit_member else None,
+            "member_gender": c.unit_member.gender if c.unit_member else None,
+        }
         for c in councilors
     ]
     
     members_list = [serialize_member(m) for m in members]
+    member_count = len(members)
+
+    settings_result = await db.execute(select(SiteSettings).limit(1))
+    settings = settings_result.scalar_one_or_none()
+    unit_registration_fee = (
+        settings.unit_registration_fee
+        if settings and settings.unit_registration_fee is not None
+        else 100
+    )
+    unit_member_fee = (
+        settings.unit_member_fee
+        if settings and settings.unit_member_fee is not None
+        else 10
+    )
+    total_amount = unit_registration_fee + member_count * unit_member_fee
+    if cycle and cycle.total_fee_at_submit is not None:
+        total_amount = cycle.total_fee_at_submit
     
     return {
         "user": {
@@ -1854,6 +1899,9 @@ async def view_unit_details(
         "officials": officials_dict,
         "councilors": councilors_list,
         "members": members_list,
-        "member_count": len(members),
+        "member_count": member_count,
+        "unit_registration_fee": unit_registration_fee,
+        "unit_member_fee": unit_member_fee,
+        "total_amount": total_amount,
     }
 
