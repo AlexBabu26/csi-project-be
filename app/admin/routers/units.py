@@ -196,6 +196,19 @@ async def admin_home_page(
     )
     pending_payments_count = pending_payments_result.scalar() or 0
 
+    pending_approval_result = await db.execute(
+        select(func.count(distinct(UnitRegistrationCycle.id))).select_from(
+            UnitRegistrationCycle
+        ).join(
+            CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id
+        ).where(
+            UnitRegistrationCycle.registration_year == current_year,
+            UnitRegistrationCycle.status == cycle_service.DECLARATION_SUBMITTED,
+            UnitRegistrationCycle.registered_user_id != current_user.id,
+        )
+    )
+    pending_approval_units_count = pending_approval_result.scalar() or 0
+
     pending_requests_count = 0
     for model in (
         UnitTransferRequest,
@@ -255,6 +268,7 @@ async def admin_home_page(
         "not_started_units_count": not_started_units_count,
         "not_onboarded_units_count": not_onboarded_units_count,
         "pending_payments_count": pending_payments_count,
+        "pending_approval_units_count": pending_approval_units_count,
         "pending_requests": pending_requests_count,
         "total_unit_members": unit_members_count,
         "total_male_members": unit_members_males_count,
