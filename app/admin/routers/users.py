@@ -5,7 +5,7 @@ import asyncio
 import secrets
 import string
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from app.common.datetime_utils import format_timestamp_ist
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, or_, func, and_
@@ -162,7 +162,7 @@ def _attach_spreadsheet_export(
         fallback_password or "",
         export_label,
     )
-    filename = f"{export_label.lower().replace(' ', '-')}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.xlsx"
+    filename = f"{export_label.lower().replace(' ', '-')}-{format_timestamp_ist()}.xlsx"
     response.spreadsheet_filename = filename
     response.spreadsheet_base64 = base64.b64encode(excel_file.getvalue()).decode("ascii")
     return response

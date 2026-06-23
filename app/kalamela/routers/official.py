@@ -2,6 +2,8 @@
 
 from datetime import date
 from typing import List, Optional
+
+from app.common.datetime_utils import today_ist
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +49,7 @@ def calculate_age(dob: Optional[date]) -> Optional[int]:
     """Calculate age from date of birth."""
     if not dob:
         return None
-    today = date.today()
+    today = today_ist()
     return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
 

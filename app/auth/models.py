@@ -2,6 +2,8 @@ import enum
 from datetime import date, datetime
 from typing import List, Optional
 
+from app.common.datetime_utils import today_ist
+
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -200,7 +202,7 @@ class UnitMembers(Base):
         """Calculate current age from date of birth."""
         if not self.dob:
             return 0
-        today = date.today()
+        today = today_ist()
         return today.year - self.dob.year - ((today.month, today.day) < (self.dob.month, self.dob.day))
 
 

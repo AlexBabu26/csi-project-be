@@ -3,6 +3,8 @@ from typing import Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
+from app.common.datetime_utils import now_ist
+
 T = TypeVar("T")
 
 
@@ -18,5 +20,5 @@ class Paginated(BaseModel, Generic[T]):
 
 
 class Timestamped(BaseModel):
-    created_on: datetime = Field(default_factory=datetime.utcnow)
+    created_on: datetime = Field(default_factory=now_ist)
 

@@ -5,6 +5,8 @@ from typing import List, Optional, Dict, Any
 from collections import defaultdict
 import re
 
+from app.common.datetime_utils import now_ist
+
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,7 +62,7 @@ async def get_kalamela_rules(db: AsyncSession, force_refresh: bool = False) -> D
     if (not force_refresh 
         and _rules_cache 
         and _rules_cache_timestamp 
-        and datetime.utcnow() - _rules_cache_timestamp < RULES_CACHE_TTL):
+        and now_ist() - _rules_cache_timestamp < RULES_CACHE_TTL):
         return _rules_cache
     
     # Fetch from database
@@ -70,7 +72,7 @@ async def get_kalamela_rules(db: AsyncSession, force_refresh: bool = False) -> D
     
     # Build cache
     _rules_cache = {rule.rule_key: rule.rule_value for rule in rules}
-    _rules_cache_timestamp = datetime.utcnow()
+    _rules_cache_timestamp = now_ist()
     
     return _rules_cache
 
@@ -1632,7 +1634,7 @@ async def create_appeal(
         )
     
     # Find score and check 30-minute window
-    now = datetime.utcnow()
+    now = now_ist()
     score_time = None
     
     # Check individual scores

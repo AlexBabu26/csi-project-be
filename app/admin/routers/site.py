@@ -1,7 +1,9 @@
 """Admin site settings router - site settings, notices, quick links."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List
+
+from app.common.datetime_utils import now_ist
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
@@ -147,7 +149,7 @@ def update_site_settings(
         if data.social_links.youtube is not None:
             settings.social_youtube = data.social_links.youtube
     
-    settings.updated_at = datetime.now(timezone.utc)
+    settings.updated_at = now_ist()
     db.commit()
     db.refresh(settings)
     
@@ -186,7 +188,7 @@ def upload_logo(
     # Update the appropriate logo field
     logo_field = f"logo_{logo_type}_url"
     setattr(settings, logo_field, object_key)
-    settings.updated_at = datetime.now(timezone.utc)
+    settings.updated_at = now_ist()
     db.commit()
     
     # Invalidate cache after logo update
@@ -266,7 +268,7 @@ def get_notices(
     query = db.query(Notice)
     
     if active_only:
-        now = datetime.now(timezone.utc)
+        now = now_ist()
         query = query.filter(
             Notice.is_active == True,
             (Notice.start_date == None) | (Notice.start_date <= now),

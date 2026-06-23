@@ -3,7 +3,7 @@
 import argparse
 import asyncio
 import sys
-from datetime import datetime, timezone
+from app.common.datetime_utils import now_ist
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -48,7 +48,7 @@ BOYCE_UNIT_NAME_ID = 350
 
 
 async def open_active_cycles(db, *, dry_run: bool) -> None:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now_ist()
     for user_id, cfg in MID_WIZARD_UNITS.items():
         existing = (
             await db.execute(

@@ -4,6 +4,8 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 
+from app.common.datetime_utils import now_ist, today_ist
+
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.security import OAuth2PasswordBearer
@@ -299,7 +301,7 @@ class YuvalokhamService:
             select(YMSubscription).where(
                 YMSubscription.user_id == user_id,
                 YMSubscription.status == SubscriptionStatus.ACTIVE,
-                YMSubscription.end_date >= date.today(),
+                YMSubscription.end_date >= today_ist(),
             )
         )
         return result.scalar_one_or_none()
@@ -379,7 +381,7 @@ class YuvalokhamService:
 
         payment.status = YMPaymentStatus.APPROVED
         payment.reviewed_by = admin.id
-        payment.reviewed_at = datetime.now(timezone.utc)
+        payment.reviewed_at = now_ist()
 
         # Activate subscription
         sub = await db.get(YMSubscription, payment.subscription_id)
@@ -387,7 +389,7 @@ class YuvalokhamService:
         if active_sub and active_sub.id != sub.id:
             sub.start_date = active_sub.end_date
         else:
-            sub.start_date = date.today()
+            sub.start_date = today_ist()
         sub.end_date = sub.start_date + relativedelta(months=sub.plan_duration_snapshot)
         sub.status = SubscriptionStatus.ACTIVE
 
@@ -405,7 +407,7 @@ class YuvalokhamService:
         payment.status = YMPaymentStatus.REJECTED
         payment.admin_remarks = remarks
         payment.reviewed_by = admin.id
-        payment.reviewed_at = datetime.now(timezone.utc)
+        payment.reviewed_at = now_ist()
         # Subscription intentionally stays PENDING_PAYMENT so user can resubmit proof
         await db.flush()
         return payment
@@ -458,7 +460,7 @@ class YuvalokhamService:
         if not mag:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Magazine not found")
         mag.status = MagazineStatus.PUBLISHED
-        mag.published_date = date.today()
+        mag.published_date = today_ist()
         await db.flush()
         return mag
 
@@ -535,7 +537,7 @@ class YuvalokhamService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Complaint is not open")
         complaint.admin_response = response
         complaint.responded_by = admin.id
-        complaint.responded_at = datetime.now(timezone.utc)
+        complaint.responded_at = now_ist()
         complaint.status = ComplaintStatus.RESOLVED
         await db.flush()
         return complaint
@@ -548,7 +550,7 @@ class YuvalokhamService:
         if complaint.status != ComplaintStatus.OPEN:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Complaint is not open")
         complaint.responded_by = admin.id
-        complaint.responded_at = datetime.now(timezone.utc)
+        complaint.responded_at = now_ist()
         complaint.status = ComplaintStatus.CLOSED
         await db.flush()
         return complaint
@@ -658,7 +660,7 @@ class YuvalokhamService:
         active_subs = (await db.execute(
             select(func.count(YMSubscription.id)).select_from(YMSubscription).where(
                 YMSubscription.status == SubscriptionStatus.ACTIVE,
-                YMSubscription.end_date >= date.today(),
+                YMSubscription.end_date >= today_ist(),
             )
         )).scalar() or 0
 
@@ -684,16 +686,16 @@ class YuvalokhamService:
 
     @staticmethod
     async def get_analytics_trends(db: AsyncSession, months: int = 12) -> List[ym_schema.YMTrendPoint]:
-        cutoff = date.today() - relativedelta(months=months)
+        cutoff = today_ist() - relativedelta(months=months)
         trends = []
 
         for i in range(months):
-            m_start = date.today() - relativedelta(months=months - 1 - i)
+            m_start = today_ist() - relativedelta(months=months - 1 - i)
             m_start = m_start.replace(day=1)
             if i < months - 1:
                 m_end = (m_start + relativedelta(months=1)) - timedelta(days=1)
             else:
-                m_end = date.today()
+                m_end = today_ist()
 
             new_users = (await db.execute(
                 select(func.count()).where(
@@ -768,7 +770,7 @@ class YuvalokhamService:
         expired_count = (await db.execute(
             select(func.count(func.distinct(expired_sub.user_id)))
             .select_from(expired_sub)
-            .where(expired_sub.end_date < date.today(), expired_sub.end_date.is_not(None))
+            .where(expired_sub.end_date < today_ist(), expired_sub.end_date.is_not(None))
         )).scalar() or 0
 
         renewed_count = 0
@@ -777,7 +779,7 @@ class YuvalokhamService:
                 select(func.count(func.distinct(expired_sub.user_id)))
                 .select_from(expired_sub)
                 .where(
-                    expired_sub.end_date < date.today(),
+                    expired_sub.end_date < today_ist(),
                     expired_sub.end_date.is_not(None),
                     expired_sub.user_id.in_(
                         select(renewed_sub.user_id)
@@ -801,13 +803,13 @@ class YuvalokhamService:
 
     @staticmethod
     async def get_expiring_subscriptions(db: AsyncSession, days: int = 30) -> List[ym_schema.YMExpiringSubscription]:
-        cutoff = date.today() + timedelta(days=days)
+        cutoff = today_ist() + timedelta(days=days)
         result = await db.execute(
             select(YMSubscription, YMUser)
             .join(YMUser, YMSubscription.user_id == YMUser.id)
             .where(
                 YMSubscription.status == SubscriptionStatus.ACTIVE,
-                YMSubscription.end_date >= date.today(),
+                YMSubscription.end_date >= today_ist(),
                 YMSubscription.end_date <= cutoff,
             )
             .order_by(YMSubscription.end_date)
@@ -817,7 +819,7 @@ class YuvalokhamService:
             ym_schema.YMExpiringSubscription(
                 subscription_id=sub.id, user_id=u.id, user_name=u.name,
                 user_email=u.email, plan_name=sub.plan_name_snapshot,
-                end_date=sub.end_date, days_remaining=(sub.end_date - date.today()).days,
+                end_date=sub.end_date, days_remaining=(sub.end_date - today_ist()).days,
             )
             for sub, u in rows
         ]

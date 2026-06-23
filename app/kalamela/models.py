@@ -2,6 +2,8 @@ from datetime import date, datetime
 from typing import List, Optional
 import enum
 
+from app.common.datetime_utils import now_ist
+
 from sqlalchemy import (
     Boolean,
     Column,
@@ -66,11 +68,11 @@ class PaymentQrCode(Base):
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
     updated_on: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=now_ist,
+        onupdate=now_ist,
     )
 
     # Reverse relationship to fees that use this QR code
@@ -87,8 +89,8 @@ class EventCategory(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist, onupdate=now_ist)
 
     # Relationship to events
     individual_events: Mapped[List["IndividualEvent"]] = relationship(
@@ -106,8 +108,8 @@ class RegistrationFee(Base):
     amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"), nullable=True)
     updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"), nullable=True)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist, onupdate=now_ist)
 
     # Optional reference to a shared payment QR code
     qr_code_id: Mapped[Optional[int]] = mapped_column(
@@ -152,7 +154,7 @@ class IndividualEvent(Base):
         SAEnum(SeniorityCategory, values_callable=lambda x: [e.value for e in x], name='seniority_restriction_enum'),
         nullable=True
     )
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     # Relationships
     event_category: Mapped[Optional["EventCategory"]] = relationship(
@@ -187,7 +189,7 @@ class GroupEvent(Base):
     max_allowed_limit: Mapped[int] = mapped_column(Integer, default=2)
     min_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
     per_unit_allowed_limit: Mapped[int] = mapped_column(Integer, default=1)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     # Relationships
     event_category: Mapped[Optional["EventCategory"]] = relationship("EventCategory")
@@ -208,7 +210,7 @@ class IndividualEventParticipation(Base):
     added_by_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False)
     chest_number: Mapped[Optional[str]] = mapped_column(String(50))
     seniority_category: Mapped[Optional[SeniorityCategory]] = mapped_column(SAEnum(SeniorityCategory))
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     __table_args__ = (
         UniqueConstraint("individual_event_id", "participant_id", name="uq_ind_event_per_participant"),
@@ -228,7 +230,7 @@ class GroupEventParticipation(Base):
     participant_id: Mapped[int] = mapped_column(ForeignKey("unit_members.id"), nullable=False)
     chest_number: Mapped[Optional[str]] = mapped_column(String(50))
     added_by_id: Mapped[int] = mapped_column(ForeignKey("custom_user.id"), nullable=False)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     __table_args__ = (
         UniqueConstraint("group_event_id", "participant_id", name="uq_group_event_per_participant"),
@@ -258,7 +260,7 @@ class KalamelaPayments(Base):
     total_amount_to_pay: Mapped[int] = mapped_column(Integer, nullable=False)
     payment_proof_path: Mapped[Optional[str]] = mapped_column(String(500))
     payment_status: Mapped[PaymentStatus] = mapped_column(SAEnum(PaymentStatus), default=PaymentStatus.PENDING)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     paid_by: Mapped[CustomUser] = relationship("CustomUser")
 
@@ -280,7 +282,7 @@ class IndividualEventScoreCard(Base):
     rank_points: Mapped[int] = mapped_column(Integer, default=0)  # 5, 3, 1, 0
     total_points: Mapped[int] = mapped_column(Integer, default=0)  # grade_points + rank_points
     
-    added_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    added_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     participation: Mapped[IndividualEventParticipation] = relationship("IndividualEventParticipation")
     participant: Mapped[UnitMembers] = relationship("UnitMembers")
@@ -303,7 +305,7 @@ class GroupEventScoreCard(Base):
     rank_points: Mapped[int] = mapped_column(Integer, default=0)  # 5, 3, 1, 0
     total_points: Mapped[int] = mapped_column(Integer, default=0)  # For groups: rank_points only
     
-    added_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    added_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
 
 class Appeal(Base):
@@ -316,7 +318,7 @@ class Appeal(Base):
     statement: Mapped[str] = mapped_column(String(1000), nullable=False)
     reply: Mapped[Optional[str]] = mapped_column(String(1000))
     status: Mapped[AppealStatus] = mapped_column(SAEnum(AppealStatus), default=AppealStatus.PENDING)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     added_by: Mapped[UnitMembers] = relationship("UnitMembers")
 
@@ -329,7 +331,7 @@ class AppealPayments(Base):
     total_amount_to_pay: Mapped[int] = mapped_column(Integer, nullable=False)
     payment_type: Mapped[str] = mapped_column(String(64), default="Appeal Fee")
     payment_status: Mapped[str] = mapped_column(String(64), default="Pending")
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 
     appeal: Mapped[Appeal] = relationship("Appeal")
 
@@ -355,8 +357,8 @@ class KalamelaRules(Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
+    updated_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist, onupdate=now_ist)
     updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"))
 
     # Relationship
@@ -390,11 +392,11 @@ class EventSchedule(Base):
         default=ScheduleStatus.SCHEDULED,
         nullable=False
     )
-    created_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
     updated_on: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        default=now_ist,
+        onupdate=now_ist
     )
     created_by_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("custom_user.id"),

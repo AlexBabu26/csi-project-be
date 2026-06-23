@@ -1,7 +1,9 @@
 """Authentication service with JWT token management."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Optional
+
+from app.common.datetime_utils import current_year_ist, now_ist
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -88,13 +90,13 @@ class AuthService:
         
         # 4. Create refresh token (7 days) and store in DB
         refresh_token_str = create_refresh_token(str(user.id))
-        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+        expires_at = now_ist() + timedelta(days=settings.refresh_token_expire_days)
         
         refresh_token = RefreshToken(
             user_id=user.id,
             token=refresh_token_str,
             expires_at=expires_at,
-            created_at=datetime.utcnow(),
+            created_at=now_ist(),
         )
         self.session.add(refresh_token)
         
@@ -164,7 +166,7 @@ class AuthService:
         refresh_token = self.session.query(RefreshToken).filter(
             RefreshToken.token == refresh_token_str,
             RefreshToken.revoked == False,  # noqa: E712
-            RefreshToken.expires_at > datetime.utcnow()
+            RefreshToken.expires_at > now_ist()
         ).first()
         
         if not refresh_token:
@@ -327,7 +329,7 @@ class AuthService:
         current_year = (
             site_settings.current_registration_year
             if site_settings and site_settings.current_registration_year
-            else datetime.utcnow().year
+            else current_year_ist()
         )
         self.session.add(
             UnitRegistrationCycle(

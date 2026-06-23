@@ -12,7 +12,7 @@ Usage:
 import argparse
 import asyncio
 import sys
-from datetime import datetime, timezone
+from app.common.datetime_utils import current_year_ist, now_ist
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -42,10 +42,10 @@ async def backfill(registration_year: int | None = None) -> None:
     async with AsyncSession() as db:
         settings = (await db.execute(select(SiteSettings).limit(1))).scalar_one_or_none()
         target_year = registration_year or (
-            settings.current_registration_year if settings and settings.current_registration_year else datetime.utcnow().year
+            settings.current_registration_year if settings and settings.current_registration_year else current_year_ist()
         )
         unit_fee, member_fee = await get_fees(db)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_ist()
 
         stmt = (
             select(UnitRegistrationData, CustomUser)

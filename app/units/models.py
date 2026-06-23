@@ -4,6 +4,8 @@ import enum
 from datetime import date, datetime
 from typing import Optional
 
+from app.common.datetime_utils import now_ist, today_ist
+
 from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,14 +39,14 @@ class ArchivedUnitMember(Base):
     number: Mapped[str] = mapped_column(String(30), nullable=False)
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
-    archived_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    archived_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     archive_year: Mapped[Optional[str]] = mapped_column(String(20))
     archive_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     @property
     def age(self) -> int:
         """Calculate current age from date of birth."""
-        today = date.today()
+        today = today_ist()
         return today.year - self.dob.year - ((today.month, today.day) < (self.dob.month, self.dob.day))
 
 
@@ -66,12 +68,12 @@ class RemovedUnitMember(Base):
     number: Mapped[str] = mapped_column(String(30), nullable=False)
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
-    archived_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    archived_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
 
     @property
     def age(self) -> int:
         """Calculate current age from date of birth."""
-        today = date.today()
+        today = today_ist()
         return today.year - self.dob.year - ((today.month, today.day) < (self.dob.month, self.dob.day))
 
 
@@ -101,9 +103,9 @@ class UnitTransferRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
     
     # Relationships
@@ -142,9 +144,9 @@ class UnitMemberChangeRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
 
 
@@ -198,9 +200,9 @@ class UnitOfficialsChangeRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
 
 
@@ -226,9 +228,9 @@ class UnitCouncilorChangeRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
 
 
@@ -251,9 +253,9 @@ class ArchivedMemberConcernRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
 
 
@@ -290,9 +292,9 @@ class UnitMemberAddRequest(Base):
     status: Mapped[RequestStatus] = mapped_column(
         Enum(RequestStatus), default=RequestStatus.PENDING, nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )
 
 
@@ -327,7 +329,7 @@ class UnitRegistrationCycle(Base):
     path_type: Mapped[str] = mapped_column(String(16), default="fresh", nullable=False)
     member_count_at_submit: Mapped[Optional[int]] = mapped_column(Integer)
     total_fee_at_submit: Mapped[Optional[int]] = mapped_column(Integer)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     registered_user = relationship("CustomUser", back_populates="registration_cycles")
@@ -366,7 +368,7 @@ class UnitRegistrationPayment(Base):
         Enum(PaymentProofStatus), default=PaymentProofStatus.PENDING, nullable=False
     )
     rejection_note: Mapped[Optional[str]] = mapped_column(Text)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     reviewed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("custom_user.id"))
 

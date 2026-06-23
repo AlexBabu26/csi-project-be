@@ -1,12 +1,14 @@
 """Admin units router - administrative endpoints for units management."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, status, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from app.common.datetime_utils import format_timestamp_ist, now_ist
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_current_user_sync
@@ -1015,7 +1017,7 @@ async def bulk_archive_members(
             number=member.number,
             qualification=member.qualification,
             blood_group=member.blood_group,
-            archived_at=datetime.utcnow(),
+            archived_at=now_ist(),
             archive_year=archive_year.strip(),
             archive_reason=archive_reason,
         )
@@ -1480,7 +1482,7 @@ async def approve_registration_payment(
     payment.status = PaymentProofStatus.APPROVED
     payment.balance_amount = balance_amount
     payment.rejection_note = None
-    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_at = now_ist()
     payment.reviewed_by_id = current_user.id
     await db.commit()
 
@@ -1512,7 +1514,7 @@ async def reject_registration_payment(
 
     payment.status = PaymentProofStatus.REJECTED
     payment.rejection_note = rejection_note.strip()
-    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_at = now_ist()
     payment.reviewed_by_id = current_user.id
     await db.commit()
 
@@ -1665,7 +1667,7 @@ async def export_unit_data(
 ):
     """Export unit, member, official, or councilor data to Excel."""
     export_type = export_type.strip().lower()
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = format_timestamp_ist()
 
     if export_type == "members":
         rows = await _load_members_for_export(db)

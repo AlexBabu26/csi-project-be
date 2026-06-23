@@ -20,7 +20,7 @@ Usage:
 import argparse
 import asyncio
 import sys
-from datetime import datetime, timezone
+from app.common.datetime_utils import now_ist
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -64,7 +64,7 @@ async def resolve_path_type(db, user_id: int, close_year: int) -> str:
 async def reconcile_closed_season(db, close_year: int) -> dict[str, int]:
     """Ensure cycles and payments are complete for the closing season."""
     unit_fee, member_fee = await get_fees(db)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now_ist()
 
     rows = (
         await db.execute(

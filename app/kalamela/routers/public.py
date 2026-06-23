@@ -253,7 +253,9 @@ async def check_appeal_eligibility(
     - Check if appeal already exists
     """
     # Find score
-    from datetime import datetime, timedelta
+    from datetime import timedelta
+
+    from app.common.datetime_utils import now_ist
     
     score_time = None
     
@@ -297,7 +299,7 @@ async def check_appeal_eligibility(
         )
     
     # Check 30-minute window
-    now = datetime.utcnow()
+    now = now_ist()
     time_elapsed = now - score_time
     is_within_window = time_elapsed <= timedelta(minutes=30)
     

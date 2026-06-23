@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Optional
 import enum
 
+from app.common.datetime_utils import now_ist
+
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,7 +28,7 @@ class Conference(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     details: Mapped[str] = mapped_column(Text, nullable=False)
-    added_on: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    added_on: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="Active", nullable=False)
 
 
@@ -76,7 +78,7 @@ class ConferencePayment(Base):
         ForeignKey("custom_user.id"), nullable=True, index=True
     )
     proof_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # File path
-    date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    date: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     status: Mapped[Optional[PaymentStatusEnum]] = mapped_column(
         Enum(PaymentStatusEnum, name='paymentstatus', create_type=False),
         nullable=True
@@ -98,7 +100,7 @@ class FoodPreference(Base):
     uploaded_by_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("custom_user.id"), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_ist, onupdate=now_ist, nullable=False
     )

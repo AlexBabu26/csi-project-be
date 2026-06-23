@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Literal, Optional
 
+from app.common.datetime_utils import current_year_ist, now_ist
+
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +40,7 @@ async def get_current_registration_year(db: AsyncSession) -> int:
     settings = await get_site_settings(db)
     if settings and settings.current_registration_year:
         return settings.current_registration_year
-    return datetime.utcnow().year
+    return current_year_ist()
 
 
 async def is_registration_enabled(db: AsyncSession) -> bool:
@@ -267,7 +269,7 @@ async def complete_cycle(
     cycle.status = REGISTRATION_COMPLETED
     cycle.member_count_at_submit = member_count
     cycle.total_fee_at_submit = total_fee
-    cycle.completed_at = datetime.utcnow()
+    cycle.completed_at = now_ist()
 
     await _sync_unit_details_after_completion(db, cycle, member_count)
 
@@ -358,7 +360,7 @@ async def confirm_current_season_registration(
     cycle.status = REGISTRATION_COMPLETED
     cycle.member_count_at_submit = member_count
     cycle.total_fee_at_submit = total_fee
-    cycle.completed_at = datetime.utcnow()
+    cycle.completed_at = now_ist()
     await _sync_unit_details_after_completion(db, cycle, member_count)
     await db.commit()
 

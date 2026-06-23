@@ -2,7 +2,8 @@
 
 import asyncio
 import sys
-from datetime import datetime
+
+from app.common.datetime_utils import current_year_ist, now_ist
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -28,7 +29,7 @@ async def backfill() -> None:
         default_year = (
             settings.current_registration_year
             if settings and settings.current_registration_year
-            else datetime.utcnow().year
+            else current_year_ist()
         )
 
         reg_result = await db.execute(select(UnitRegistrationData))
@@ -62,7 +63,7 @@ async def backfill() -> None:
                     registration_year=year,
                     status=reg.status,
                     path_type="fresh",
-                    completed_at=datetime.utcnow()
+                    completed_at=now_ist()
                     if reg.status == REGISTRATION_COMPLETED
                     else None,
                 )

@@ -3,6 +3,8 @@
 from datetime import date, datetime
 from typing import Optional
 
+from app.common.datetime_utils import now_ist
+
 from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,7 +52,7 @@ class SiteSettings(Base):
     social_youtube: Mapped[Optional[str]] = mapped_column(String(500))
     
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=now_ist, onupdate=now_ist
     )
 
 
@@ -65,9 +67,9 @@ class Notice(Base):
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     start_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=now_ist, onupdate=now_ist
     )
 
 
@@ -80,5 +82,5 @@ class QuickLink(Base):
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
 

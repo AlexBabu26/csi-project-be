@@ -10,7 +10,7 @@ Uses the same completion semantics as advance_registration_season.py:
 import argparse
 import asyncio
 import sys
-from datetime import datetime, timezone
+from app.common.datetime_utils import now_ist
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -54,7 +54,7 @@ async def fetch_incomplete_cycles(db):
 
 async def complete_cycle_row(db, cycle: UnitRegistrationCycle, *, dry_run: bool) -> dict:
     unit_fee, member_fee = await get_fees(db)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now_ist()
     user_id = cycle.registered_user_id
 
     members = (

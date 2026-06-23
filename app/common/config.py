@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Pagination defaults
     default_page_size: int = 50
 
+    # Application timezone for date/time captures and display
+    app_timezone: str = "Asia/Kolkata"
+
     # Email / notification settings
     mail_sender: Optional[str] = None
     resend_api_key: Optional[str] = None

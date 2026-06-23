@@ -2,6 +2,8 @@
 
 from typing import List, Optional
 from datetime import date
+
+from app.common.datetime_utils import today_ist
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, and_, or_
@@ -761,7 +763,7 @@ async def view_unit_members(
     excluded_ids = [row[0] for row in result.all()]
     
     members_with_age = []
-    today = date.today()
+    today = today_ist()
     
     for member in members:
         age = 0
