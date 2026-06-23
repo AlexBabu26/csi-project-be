@@ -1794,7 +1794,8 @@ async def view_unit_details(
 ):
     """View individual unit details."""
     stmt = select(CustomUser).where(CustomUser.id == unit_id).options(
-        selectinload(CustomUser.unit_name)
+        selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+        selectinload(CustomUser.clergy_district),
     )
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
@@ -1888,12 +1889,19 @@ async def view_unit_details(
     total_amount = unit_registration_fee + member_count * unit_member_fee
     if cycle and cycle.total_fee_at_submit is not None:
         total_amount = cycle.total_fee_at_submit
+
+    clergy_district_name = None
+    if user.unit_name and user.unit_name.district:
+        clergy_district_name = user.unit_name.district.name
+    elif user.clergy_district:
+        clergy_district_name = user.clergy_district.name
     
     return {
         "user": {
             "id": user.id,
             "username": user.username,
             "unit_name": user.unit_name.name if user.unit_name else None,
+            "clergy_district_name": clergy_district_name,
         },
         "registration_year": registration_year,
         "cycle_status": cycle.status if cycle else None,
