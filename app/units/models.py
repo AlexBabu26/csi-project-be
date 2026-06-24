@@ -154,6 +154,16 @@ class UnitMemberChangeRequest(Base):
     dob: Mapped[Optional[date]] = mapped_column(Date)
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
+    residence_location: Mapped[Optional[ResidenceLocation]] = mapped_column(
+        Enum(ResidenceLocation),
+        nullable=True,
+    )
+    residence_state_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("state.id"), nullable=True, index=True
+    )
+    residence_city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("city.id"), nullable=True, index=True
+    )
     
     # Original values for reversion
     original_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -161,6 +171,16 @@ class UnitMemberChangeRequest(Base):
     original_dob: Mapped[Optional[date]] = mapped_column(Date)
     original_blood_group: Mapped[Optional[str]] = mapped_column(String(10))
     original_qualification: Mapped[Optional[str]] = mapped_column(String(255))
+    original_residence_location: Mapped[Optional[ResidenceLocation]] = mapped_column(
+        Enum(ResidenceLocation),
+        nullable=True,
+    )
+    original_residence_state_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("state.id"), nullable=True
+    )
+    original_residence_city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("city.id"), nullable=True
+    )
     
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     proof: Mapped[str] = mapped_column(String(500), nullable=False)  # File path

@@ -209,6 +209,9 @@ class UnitMemberChangeRequestCreate(UnitMemberChangeRequestBase):
     dob: Optional[date] = None
     blood_group: Optional[str] = Field(None, max_length=10)
     qualification: Optional[str] = Field(None, max_length=255)
+    residence_location: Optional[ResidenceLocation] = None
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
     proof: str = Field(..., description="File path to proof document")
     
     @field_validator("proof")
@@ -218,6 +221,16 @@ class UnitMemberChangeRequestCreate(UnitMemberChangeRequestBase):
         if not any(v.lower().endswith(f".{ext.value}") for ext in FileExtension):
             raise ValueError(f"File must have one of these extensions: {', '.join(e.value for e in FileExtension)}")
         return v
+
+    @model_validator(mode='after')
+    def validate_residence(self):
+        if self.residence_location is not None:
+            _validate_residence_fields(
+                self.residence_location,
+                self.residence_state_id,
+                self.residence_city_id,
+            )
+        return self
 
 
 class UnitMemberChangeRequestResponse(BaseModel):
@@ -233,11 +246,17 @@ class UnitMemberChangeRequestResponse(BaseModel):
     dob: Optional[date]
     blood_group: Optional[str]
     qualification: Optional[str]
+    residence_location: Optional[ResidenceLocation] = None
+    residence_state_id: Optional[int] = None
+    residence_city_id: Optional[int] = None
     original_name: Optional[str]
     original_gender: Optional[str]
     original_dob: Optional[date]
     original_blood_group: Optional[str]
     original_qualification: Optional[str]
+    original_residence_location: Optional[ResidenceLocation] = None
+    original_residence_state_id: Optional[int] = None
+    original_residence_city_id: Optional[int] = None
     proof: str
     status: RequestStatus
     created_at: datetime

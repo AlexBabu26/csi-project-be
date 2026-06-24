@@ -797,6 +797,26 @@ async def list_all_unit_councilors(
     return {"data": data, "total": total, "page": page, "page_size": page_size, "pages": (total + page_size - 1) // page_size}
 
 
+def _member_search_filters(search_term: str) -> tuple[list, bool]:
+    """Match each word against name, phone, qualification, or unit name."""
+    words = [w for w in search_term.split() if w]
+    if not words:
+        return [], False
+
+    word_filters = []
+    for word in words:
+        pattern = f"%{word}%"
+        word_filters.append(
+            or_(
+                func.trim(UnitMembers.name).ilike(pattern),
+                UnitMembers.number.ilike(pattern),
+                func.coalesce(UnitMembers.qualification, "").ilike(pattern),
+                UnitName.name.ilike(pattern),
+            )
+        )
+    return word_filters, True
+
+
 # Unit Members Endpoint with Pagination
 @router.get("/members", response_model=dict)
 async def list_all_unit_members(
@@ -821,16 +841,8 @@ async def list_all_unit_members(
     search_term = (search or "").strip()
     unit_name_joined = False
     if search_term:
-        pattern = f"%{search_term}%"
-        filters.append(
-            or_(
-                UnitMembers.name.ilike(pattern),
-                UnitMembers.number.ilike(pattern),
-                UnitMembers.qualification.ilike(pattern),
-                UnitName.name.ilike(pattern),
-            )
-        )
-        unit_name_joined = True
+        search_filters, unit_name_joined = _member_search_filters(search_term)
+        filters.extend(search_filters)
 
     # Get total count
     count_stmt = select(func.count()).select_from(UnitMembers)

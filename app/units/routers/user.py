@@ -1,6 +1,8 @@
 """Units user router - endpoints for registered unit users."""
 
-from datetime import date, datetime
+from datetime import date
+
+from app.common.datetime_utils import now_ist
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy import select, and_
@@ -800,6 +802,9 @@ async def create_member_change_request(
     dob: Optional[str] = Form(None),
     blood_group: Optional[str] = Form(None),
     qualification: Optional[str] = Form(None),
+    residence_location: Optional[str] = Form(None),
+    residence_state_id: Optional[str] = Form(None),
+    residence_city_id: Optional[str] = Form(None),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -814,6 +819,19 @@ async def create_member_change_request(
 
     parsed_dob = date.fromisoformat(dob) if dob else None
 
+    residence_enum = None
+    if residence_location:
+        try:
+            residence_enum = ResidenceLocation(residence_location)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid residence location",
+            ) from exc
+
+    parsed_state_id = int(residence_state_id) if residence_state_id else None
+    parsed_city_id = int(residence_city_id) if residence_city_id else None
+
     data = UnitMemberChangeRequestCreate(
         unit_member_id=unit_member_id,
         reason=reason,
@@ -822,6 +840,9 @@ async def create_member_change_request(
         dob=parsed_dob,
         blood_group=blood_group or None,
         qualification=qualification or None,
+        residence_location=residence_enum,
+        residence_state_id=parsed_state_id,
+        residence_city_id=parsed_city_id,
         proof=proof_path,
     )
     return await units_service.create_member_info_change_request(db, current_user.id, data)
@@ -1233,6 +1254,14 @@ async def get_payment_status(
             "submissions": [],
         }
 
+    if await cycle_service.reconcile_cycle_fee_after_member_removals(
+        db,
+        registered_user_id=current_user.id,
+        cycle=cycle,
+    ):
+        await db.commit()
+        await db.refresh(cycle)
+
     payment_data = await cycle_service.get_payment_status_for_cycle(
         db, current_user.id, cycle.id
     )
@@ -1261,6 +1290,7 @@ async def get_payment_status(
         "overall_status": payment_data["overall_status"],
         "balance_amount": payment_data["balance_amount"],
         "registration_total_amount": cycle.total_fee_at_submit,
+        "registration_member_count": cycle.member_count_at_submit,
         "latest_rejection_note": payment_data["latest_rejection_note"],
         "qr_url": qr_url,
         "registration_year": cycle.registration_year,
@@ -1295,7 +1325,27 @@ async def submit_payment_proof(
             detail="Payment for this registration year has already been fully approved.",
         )
 
-    if await cycle_service.cycle_has_pending_payment(db, cycle.id):
+    if await cycle_service.reconcile_cycle_fee_after_member_removals(
+        db,
+        registered_user_id=current_user.id,
+        cycle=cycle,
+    ):
+        await db.commit()
+        await db.refresh(cycle)
+
+    registration_total = cycle.total_fee_at_submit
+    if registration_total is not None:
+        await cycle_service.supersede_stale_pending_payments(
+            db,
+            cycle.id,
+            registration_total=registration_total,
+        )
+
+    if await cycle_service.cycle_has_blocking_pending_payment(
+        db,
+        cycle.id,
+        registration_total=registration_total,
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A payment proof is already awaiting admin review. Please wait for approval or rejection before submitting another.",
@@ -1304,13 +1354,16 @@ async def submit_payment_proof(
     # Upload file to B2
     object_key, _ = save_upload_file(file, subdir="units/registration-payments")
 
-    # Calculate total amount for reference
+    # Calculate total amount for reference (prefer cycle snapshot after declaration)
     unit_fee, member_fee = await _get_unit_registration_fees(db)
-    member_count_result = await db.execute(
-        select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id)
-    )
-    member_count = len(list(member_count_result.scalars().all()))
-    total = unit_fee + (member_count * member_fee)
+    if cycle.total_fee_at_submit is not None:
+        total = cycle.total_fee_at_submit
+    else:
+        member_count_result = await db.execute(
+            select(UnitMembers).where(UnitMembers.registered_user_id == current_user.id)
+        )
+        member_count = len(list(member_count_result.scalars().all()))
+        total = unit_fee + (member_count * member_fee)
 
     payment = UnitRegistrationPayment(
         registered_user_id=current_user.id,

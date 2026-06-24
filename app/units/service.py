@@ -359,13 +359,32 @@ async def create_member_info_change_request(
             detail="Unit member not found or does not belong to you"
         )
     
+    resolved_residence = None
+    if data.residence_location is not None:
+        resolved_residence = await residence_service.apply_residence_fields(
+            db,
+            residence_location=data.residence_location,
+            residence_state_id=data.residence_state_id,
+            residence_city_id=data.residence_city_id,
+        )
+
+    residence_changed = False
+    if resolved_residence is not None:
+        new_location, new_state_id, new_city_id = resolved_residence
+        residence_changed = (
+            new_location != member.residence_location
+            or new_state_id != member.residence_state_id
+            or new_city_id != member.residence_city_id
+        )
+    
     # Check if any changes were requested
     has_changes = (
         (data.name and data.name != member.name) or
         (data.gender and data.gender != member.gender) or
         (data.dob and data.dob != member.dob) or
         (data.blood_group and data.blood_group != member.blood_group) or
-        (data.qualification and data.qualification != member.qualification)
+        (data.qualification and data.qualification != member.qualification) or
+        residence_changed
     )
     
     if not has_changes:
@@ -387,6 +406,12 @@ async def create_member_info_change_request(
         original_blood_group=member.blood_group,
         qualification=data.qualification if data.qualification and data.qualification != member.qualification else None,
         original_qualification=member.qualification,
+        residence_location=resolved_residence[0] if residence_changed and resolved_residence else None,
+        residence_state_id=resolved_residence[1] if residence_changed and resolved_residence else None,
+        residence_city_id=resolved_residence[2] if residence_changed and resolved_residence else None,
+        original_residence_location=member.residence_location if residence_changed else None,
+        original_residence_state_id=member.residence_state_id if residence_changed else None,
+        original_residence_city_id=member.residence_city_id if residence_changed else None,
         reason=data.reason,
         proof=data.proof,
         status=RequestStatus.PENDING,
@@ -448,6 +473,10 @@ async def approve_member_info_change(
         member.blood_group = change_request.blood_group
     if change_request.qualification:
         member.qualification = change_request.qualification
+    if change_request.residence_location is not None:
+        member.residence_location = change_request.residence_location
+        member.residence_state_id = change_request.residence_state_id
+        member.residence_city_id = change_request.residence_city_id
     
     # Update status
     change_request.status = RequestStatus.APPROVED
@@ -507,6 +536,10 @@ async def revert_member_info_change(
         member.blood_group = change_request.original_blood_group
     if change_request.original_qualification is not None:
         member.qualification = change_request.original_qualification
+    if change_request.original_residence_location is not None or change_request.residence_location is not None:
+        member.residence_location = change_request.original_residence_location
+        member.residence_state_id = change_request.original_residence_state_id
+        member.residence_city_id = change_request.original_residence_city_id
     
     # Update status back to pending
     change_request.status = RequestStatus.PENDING
@@ -1296,9 +1329,15 @@ async def remove_unit_member(
 
     await _validate_admin_removal_not_archival(db, [member], confirm_not_archival)
 
+    registered_user_id = member.registered_user_id
     removed_member = _build_removed_member_record(member, reason, deleted_by_id)
     db.add(removed_member)
     await db.delete(member)
+    await cycle_service.adjust_fee_for_member_delta(
+        db,
+        registered_user_id=registered_user_id,
+        delta_members=-1,
+    )
     await db.commit()
     await db.refresh(removed_member)
 
@@ -1318,9 +1357,20 @@ async def bulk_remove_unit_members(
 
     await _validate_admin_removal_not_archival(db, members, confirm_not_archival)
 
+    removals_by_unit: Dict[int, int] = {}
     for member in members:
         db.add(_build_removed_member_record(member, reason, deleted_by_id))
+        removals_by_unit[member.registered_user_id] = (
+            removals_by_unit.get(member.registered_user_id, 0) + 1
+        )
         await db.delete(member)
+
+    for registered_user_id, removal_count in removals_by_unit.items():
+        await cycle_service.adjust_fee_for_member_delta(
+            db,
+            registered_user_id=registered_user_id,
+            delta_members=-removal_count,
+        )
 
     await db.commit()
     return len(members)
@@ -1460,11 +1510,17 @@ def _member_change_request_dict(
         "dob": req.dob,
         "blood_group": req.blood_group,
         "qualification": req.qualification,
+        "residence_location": req.residence_location,
+        "residence_state_id": req.residence_state_id,
+        "residence_city_id": req.residence_city_id,
         "original_name": req.original_name,
         "original_gender": req.original_gender,
         "original_dob": req.original_dob,
         "original_blood_group": req.original_blood_group,
         "original_qualification": req.original_qualification,
+        "original_residence_location": req.original_residence_location,
+        "original_residence_state_id": req.original_residence_state_id,
+        "original_residence_city_id": req.original_residence_city_id,
         "proof": req.proof,
         "status": req.status,
         "created_at": req.created_at,
@@ -2042,6 +2098,13 @@ async def get_unit_my_requests(
                     "dob": dob.isoformat() if hasattr(dob, "isoformat") else dob,
                     "bloodGroup": req.get("blood_group"),
                     "qualification": req.get("qualification"),
+                    "residenceLocation": (
+                        req.get("residence_location").value
+                        if hasattr(req.get("residence_location"), "value")
+                        else req.get("residence_location")
+                    ),
+                    "residenceStateId": req.get("residence_state_id"),
+                    "residenceCityId": req.get("residence_city_id"),
                 }.items()
                 if v is not None
             },

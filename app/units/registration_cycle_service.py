@@ -565,6 +565,98 @@ async def cycle_has_pending_payment(db: AsyncSession, cycle_id: int) -> bool:
     return (result.scalar() or 0) > 0
 
 
+async def cycle_has_blocking_pending_payment(
+    db: AsyncSession,
+    cycle_id: int,
+    *,
+    registration_total: Optional[int],
+) -> bool:
+    """
+    Return True when a pending proof must block a new upload.
+
+    Pending proofs submitted before a fee revision (total above current cycle
+    fee) are not blocking — the unit may submit an updated proof.
+    """
+    result = await db.execute(
+        select(UnitRegistrationPayment)
+        .where(
+            UnitRegistrationPayment.registration_cycle_id == cycle_id,
+            UnitRegistrationPayment.status == PaymentProofStatus.PENDING,
+        )
+        .order_by(UnitRegistrationPayment.submitted_at.asc())
+    )
+    pending = list(result.scalars().all())
+    if not pending:
+        return False
+
+    if registration_total is None:
+        return True
+
+    for payment in pending:
+        if payment.total_amount is None or payment.total_amount <= registration_total:
+            return True
+    return False
+
+
+async def reconcile_cycle_fee_after_member_removals(
+    db: AsyncSession,
+    *,
+    registered_user_id: int,
+    cycle: UnitRegistrationCycle,
+) -> bool:
+    """
+    Align cycle fee snapshot with active members when admin removals lowered
+    the roster after declaration (including removals before fee sync existed).
+    """
+    if cycle.status not in (DECLARATION_SUBMITTED, REGISTRATION_COMPLETED):
+        return False
+    if cycle.member_count_at_submit is None:
+        return False
+
+    member_count_result = await db.execute(
+        select(func.count())
+        .select_from(UnitMembers)
+        .where(UnitMembers.registered_user_id == registered_user_id)
+    )
+    active_count = member_count_result.scalar() or 0
+    if active_count >= cycle.member_count_at_submit:
+        return False
+
+    delta_members = active_count - cycle.member_count_at_submit
+    return await adjust_fee_for_member_delta(
+        db,
+        registered_user_id=registered_user_id,
+        delta_members=delta_members,
+    )
+
+
+async def supersede_stale_pending_payments(
+    db: AsyncSession,
+    cycle_id: int,
+    *,
+    registration_total: int,
+) -> int:
+    """Reject pending proofs that were submitted for a higher pre-revision fee."""
+    result = await db.execute(
+        select(UnitRegistrationPayment)
+        .where(
+            UnitRegistrationPayment.registration_cycle_id == cycle_id,
+            UnitRegistrationPayment.status == PaymentProofStatus.PENDING,
+            UnitRegistrationPayment.total_amount.isnot(None),
+            UnitRegistrationPayment.total_amount > registration_total,
+        )
+    )
+    stale = list(result.scalars().all())
+    for payment in stale:
+        payment.status = PaymentProofStatus.REJECTED
+        payment.rejection_note = (
+            "Superseded — registration fee was revised after member update. "
+            "Please submit a new proof for the updated amount."
+        )
+        payment.reviewed_at = now_ist()
+    return len(stale)
+
+
 async def _get_member_fee(db: AsyncSession) -> int:
     settings = await get_site_settings(db)
     if settings and settings.unit_member_fee is not None:
@@ -591,13 +683,13 @@ async def adjust_fee_for_member_delta(
     delta_members: int,
 ) -> bool:
     """
-    After a post-declaration member add, update the cycle fee snapshot and
-    outstanding payment balance for the current season.
+    After a post-declaration member add or admin removal, update the cycle fee
+    snapshot and outstanding payment balance for the current season.
 
-    Only applies when declaration has already been submitted. Member removals
-    are not auto-refunded (delta_members must be positive).
+    Only applies when declaration has already been submitted. Positive deltas
+    increase the fee and balance; negative deltas reduce them (balance floors at 0).
     """
-    if delta_members <= 0:
+    if delta_members == 0:
         return False
 
     current_year = await get_current_registration_year(db)
@@ -607,12 +699,22 @@ async def adjust_fee_for_member_delta(
 
     member_fee = await _get_member_fee(db)
     fee_delta = delta_members * member_fee
-    if fee_delta <= 0:
+    if fee_delta == 0:
         return False
 
+    settings = await get_site_settings(db)
+    unit_fee = (
+        settings.unit_registration_fee
+        if settings and settings.unit_registration_fee is not None
+        else 100
+    )
+
     if cycle.member_count_at_submit is not None and cycle.total_fee_at_submit is not None:
-        cycle.member_count_at_submit += delta_members
-        cycle.total_fee_at_submit += fee_delta
+        cycle.member_count_at_submit = max(0, cycle.member_count_at_submit + delta_members)
+        cycle.total_fee_at_submit = max(
+            unit_fee,
+            cycle.total_fee_at_submit + fee_delta,
+        )
     else:
         member_count_result = await db.execute(
             select(func.count())
@@ -620,12 +722,6 @@ async def adjust_fee_for_member_delta(
             .where(UnitMembers.registered_user_id == registered_user_id)
         )
         member_count = member_count_result.scalar() or 0
-        settings = await get_site_settings(db)
-        unit_fee = (
-            settings.unit_registration_fee
-            if settings and settings.unit_registration_fee is not None
-            else 100
-        )
         cycle.member_count_at_submit = member_count
         cycle.total_fee_at_submit = unit_fee + (member_count * member_fee)
 
@@ -633,11 +729,22 @@ async def adjust_fee_for_member_delta(
     approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
     if approved:
         latest = approved[-1]
-        latest.total_amount = (latest.total_amount or cycle.total_fee_at_submit or 0) + fee_delta
-        latest.balance_amount = (latest.balance_amount or 0) + fee_delta
+        latest.total_amount = max(
+            unit_fee,
+            (latest.total_amount or cycle.total_fee_at_submit or 0) + fee_delta,
+        )
+        latest.balance_amount = max(0, (latest.balance_amount or 0) + fee_delta)
     elif payments:
         latest = payments[-1]
-        if latest.status == PaymentProofStatus.PENDING and latest.total_amount is not None:
-            latest.total_amount += fee_delta
+        if latest.status == PaymentProofStatus.PENDING:
+            if fee_delta < 0:
+                latest.status = PaymentProofStatus.REJECTED
+                latest.rejection_note = (
+                    "Registration fee was revised after member update. "
+                    "Please submit a new proof for the updated amount."
+                )
+                latest.reviewed_at = now_ist()
+            elif latest.total_amount is not None:
+                latest.total_amount = max(unit_fee, latest.total_amount + fee_delta)
 
     return True
