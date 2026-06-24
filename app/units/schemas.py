@@ -96,6 +96,40 @@ class RemovedUnitMemberResponse(RemovedUnitMemberBase):
     id: int
     registered_user_id: int
     archived_at: datetime
+    delete_reason: Optional[str] = None
+    deleted_by_id: Optional[int] = None
+    original_member_id: Optional[int] = None
+    notified_at: Optional[datetime] = None
+    removal_type: Optional[str] = None
+    removed_at: Optional[datetime] = None
+
+
+class MemberRemoveRequest(BaseModel):
+    """Admin request to remove an active unit member (not seasonal archival)."""
+
+    reason: str = Field(..., min_length=10, max_length=5000)
+    confirm_not_archival: bool = False
+
+
+class BulkMemberRemoveRequest(BaseModel):
+    """Admin request to remove multiple active unit members (not seasonal archival)."""
+
+    member_ids: List[int] = Field(..., min_length=1)
+    reason: str = Field(..., min_length=10, max_length=5000)
+    confirm_not_archival: bool = False
+
+
+class PendingRemovedMembersResponse(BaseModel):
+    """Removed members awaiting unit acknowledgement."""
+
+    summary: ArchivedMembersSummary
+    members: List[RemovedUnitMemberResponse]
+
+
+class AcknowledgeRemovedMembersRequest(BaseModel):
+    """Mark removed-member notifications as seen by the unit."""
+
+    removed_member_ids: Optional[List[int]] = None
 
 
 # Unit Transfer Request Schemas

@@ -21,6 +21,13 @@ class RequestStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class MemberRemovalType(str, enum.Enum):
+    """How a member landed in removed_unit_member (distinct from seasonal archival)."""
+
+    ADMIN = "ADMIN"
+    LEGACY = "LEGACY"
+
+
 class ArchivedUnitMember(Base):
     """
     Stores information about former UnitMembers who exceed the age threshold.
@@ -69,6 +76,22 @@ class RemovedUnitMember(Base):
     qualification: Mapped[Optional[str]] = mapped_column(String(255))
     blood_group: Mapped[Optional[str]] = mapped_column(String(10))
     archived_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist, nullable=False)
+    delete_reason: Mapped[Optional[str]] = mapped_column(Text)
+    deleted_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("custom_user.id"), nullable=True, index=True
+    )
+    original_member_id: Mapped[Optional[int]] = mapped_column(Integer)
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    removal_type: Mapped[MemberRemovalType] = mapped_column(
+        Enum(MemberRemovalType),
+        default=MemberRemovalType.LEGACY,
+        nullable=False,
+    )
+
+    @property
+    def removed_at(self) -> datetime:
+        """Alias for archived_at — this table is not used for seasonal archival."""
+        return self.archived_at
 
     @property
     def age(self) -> int:

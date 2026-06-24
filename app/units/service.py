@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 
+from app.common.datetime_utils import now_ist
 from app.auth.models import (
     CustomUser,
     UnitDetails,
@@ -17,10 +18,12 @@ from app.auth.models import (
     UnitName,
     UserType,
 )
+from app.admin.models import SiteSettings
 from app.units.models import (
     ArchivedUnitMember,
     ArchivedMemberConcernRequest,
     RemovedUnitMember,
+    MemberRemovalType,
     UnitTransferRequest,
     UnitMemberChangeRequest,
     UnitOfficialsChangeRequest,
@@ -1208,37 +1211,54 @@ async def reject_member_add_request(
     return _member_add_request_dict(add_request, unit_name=unit_name, username=username)
 
 
-# Archive Member Function
-async def archive_unit_member(
+# Admin member removal (distinct from seasonal archival → archived_unit_member)
+async def _get_member_dob_limits(db: AsyncSession) -> tuple[date, date]:
+    ss_result = await db.execute(select(SiteSettings))
+    ss = ss_result.scalar_one_or_none()
+    min_dob = ss.member_min_dob if ss and ss.member_min_dob else date(1990, 1, 1)
+    max_dob = ss.member_max_dob if ss and ss.member_max_dob else date(2011, 12, 31)
+    return min_dob, max_dob
+
+
+def _member_is_archive_eligible(member: UnitMembers, min_dob: date, max_dob: date) -> bool:
+    return member.dob < min_dob or member.dob > max_dob
+
+
+async def _validate_admin_removal_not_archival(
     db: AsyncSession,
-    member_id: int,
-) -> RemovedUnitMember:
+    members: List[UnitMembers],
+    confirm_not_archival: bool,
+) -> None:
     """
-    Archive a unit member to RemovedUnitMember and delete from UnitMembers.
-    
-    Args:
-        db: Database session
-        member_id: ID of the member to archive
-    
-    Returns:
-        Created RemovedUnitMember record
-    
-    Raises:
-        HTTPException: If member not found
+    Prevent accidental use of admin removal for members who should use
+    the seasonal Archive Members workflow instead.
     """
-    # Get member
-    stmt = select(UnitMembers).where(UnitMembers.id == member_id)
-    result = await db.execute(stmt)
-    member = result.scalar_one_or_none()
-    
-    if not member:
+    if not members:
+        return
+
+    min_dob, max_dob = await _get_member_dob_limits(db)
+    archive_eligible = [m for m in members if _member_is_archive_eligible(m, min_dob, max_dob)]
+    if archive_eligible and not confirm_not_archival:
+        preview = ", ".join(m.name for m in archive_eligible[:3])
+        extra = f" (+{len(archive_eligible) - 3} more)" if len(archive_eligible) > 3 else ""
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Unit member not found"
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Member(s) eligible for seasonal archiving: {preview}{extra}. "
+                "Use Admin → Archive Members for age-based archival. "
+                "To remove anyway (e.g. duplicate or invalid entry), confirm this is "
+                "not seasonal archival."
+            ),
         )
-    
-    # Create archived record
-    removed_member = RemovedUnitMember(
+
+
+def _build_removed_member_record(
+    member: UnitMembers,
+    reason: str,
+    deleted_by_id: int,
+) -> RemovedUnitMember:
+    """Create a removed_unit_member row — never writes to archived_unit_member."""
+    return RemovedUnitMember(
         registered_user_id=member.registered_user_id,
         name=member.name,
         gender=member.gender,
@@ -1246,17 +1266,126 @@ async def archive_unit_member(
         number=member.number,
         qualification=member.qualification,
         blood_group=member.blood_group,
+        delete_reason=reason.strip(),
+        deleted_by_id=deleted_by_id,
+        original_member_id=member.id,
+        removal_type=MemberRemovalType.ADMIN,
     )
-    
+
+
+async def remove_unit_member(
+    db: AsyncSession,
+    member_id: int,
+    reason: str,
+    deleted_by_id: int,
+    confirm_not_archival: bool = False,
+) -> RemovedUnitMember:
+    """
+    Move an active unit member to removed_unit_member (admin removal).
+    Seasonal archival must use bulk_archive → archived_unit_member instead.
+    """
+    stmt = select(UnitMembers).where(UnitMembers.id == member_id)
+    result = await db.execute(stmt)
+    member = result.scalar_one_or_none()
+
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unit member not found",
+        )
+
+    await _validate_admin_removal_not_archival(db, [member], confirm_not_archival)
+
+    removed_member = _build_removed_member_record(member, reason, deleted_by_id)
     db.add(removed_member)
-    
-    # Delete original member
     await db.delete(member)
-    
     await db.commit()
     await db.refresh(removed_member)
-    
+
     return removed_member
+
+
+async def bulk_remove_unit_members(
+    db: AsyncSession,
+    members: List[UnitMembers],
+    reason: str,
+    deleted_by_id: int,
+    confirm_not_archival: bool = False,
+) -> int:
+    """Bulk admin removal into removed_unit_member (not archival)."""
+    if not members:
+        return 0
+
+    await _validate_admin_removal_not_archival(db, members, confirm_not_archival)
+
+    for member in members:
+        db.add(_build_removed_member_record(member, reason, deleted_by_id))
+        await db.delete(member)
+
+    await db.commit()
+    return len(members)
+
+
+def _summarize_removed_members(members: List[RemovedUnitMember]) -> Dict[str, int]:
+    male = 0
+    female = 0
+    for member in members:
+        gender = _normalize_gender(member.gender)
+        if gender == "M":
+            male += 1
+        elif gender == "F":
+            female += 1
+    return {"total": len(members), "male": male, "female": female}
+
+
+async def get_pending_removed_members_for_unit(
+    db: AsyncSession,
+    user_id: int,
+) -> Dict[str, Any]:
+    """Return admin-removed members to show the unit on login (until session dismiss)."""
+    stmt = (
+        select(RemovedUnitMember)
+        .where(
+            RemovedUnitMember.registered_user_id == user_id,
+            RemovedUnitMember.removal_type == MemberRemovalType.ADMIN,
+            RemovedUnitMember.delete_reason.isnot(None),
+        )
+        .order_by(RemovedUnitMember.archived_at.desc())
+    )
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+
+    return {
+        "summary": _summarize_removed_members(members),
+        "members": members,
+    }
+
+
+async def acknowledge_removed_members(
+    db: AsyncSession,
+    user_id: int,
+    removed_member_ids: Optional[List[int]] = None,
+) -> int:
+    """Mark removed-member notifications as seen by the unit."""
+    stmt = select(RemovedUnitMember).where(
+        RemovedUnitMember.registered_user_id == user_id,
+        RemovedUnitMember.notified_at.is_(None),
+        RemovedUnitMember.removal_type == MemberRemovalType.ADMIN,
+    )
+    if removed_member_ids:
+        stmt = stmt.where(RemovedUnitMember.id.in_(removed_member_ids))
+
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+    if not members:
+        return 0
+
+    now = now_ist()
+    for member in members:
+        member.notified_at = now
+
+    await db.commit()
+    return len(members)
 
 
 # List Functions for requests

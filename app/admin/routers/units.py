@@ -50,6 +50,8 @@ from app.units.schemas import (
     UnitMemberAddRequestResponse,
     ArchivedMemberConcernRequestResponse,
     RequestActionSchema,
+    MemberRemoveRequest,
+    BulkMemberRemoveRequest,
 )
 from app.units import service as units_service
 from app.kalamela.models import (
@@ -805,6 +807,7 @@ async def list_all_unit_members(
     unit_id: Optional[int] = Query(None, description="Filter by registered unit user id"),
     residence_location: Optional[ResidenceLocation] = Query(None),
     missing_residence_location: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None, description="Search name, phone, qualification, or unit name"),
 ):
     """List all unit members across all units with pagination."""
     filters = []
@@ -815,8 +818,28 @@ async def list_all_unit_members(
     elif residence_location is not None:
         filters.append(UnitMembers.residence_location == residence_location)
 
+    search_term = (search or "").strip()
+    unit_name_joined = False
+    if search_term:
+        pattern = f"%{search_term}%"
+        filters.append(
+            or_(
+                UnitMembers.name.ilike(pattern),
+                UnitMembers.number.ilike(pattern),
+                UnitMembers.qualification.ilike(pattern),
+                UnitName.name.ilike(pattern),
+            )
+        )
+        unit_name_joined = True
+
     # Get total count
     count_stmt = select(func.count()).select_from(UnitMembers)
+    if unit_name_joined:
+        count_stmt = (
+            count_stmt
+            .outerjoin(CustomUser, CustomUser.id == UnitMembers.registered_user_id)
+            .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        )
     if filters:
         count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar() or 0
@@ -826,11 +849,17 @@ async def list_all_unit_members(
     stmt = select(UnitMembers).options(
         selectinload(UnitMembers.registered_user).selectinload(CustomUser.unit_name).selectinload(UnitName.district),
         *MEMBER_RESIDENCE_LOAD_OPTIONS,
-    ).offset(offset).limit(page_size)
+    ).order_by(UnitMembers.name.asc()).offset(offset).limit(page_size)
+    if unit_name_joined:
+        stmt = (
+            stmt
+            .outerjoin(CustomUser, CustomUser.id == UnitMembers.registered_user_id)
+            .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+        )
     if filters:
         stmt = stmt.where(*filters)
     result = await db.execute(stmt)
-    members_list = list(result.scalars().all())
+    members_list = list(result.scalars().unique().all())
     
     data = []
     for member in members_list:
@@ -987,8 +1016,8 @@ async def bulk_archive_members(
     db: AsyncSession = Depends(get_async_db),
 ):
     """
-    Archive a set of active unit members into archived_unit_member with a
-    registration year label (e.g. "2025-2026").
+    Archive active members into archived_unit_member for seasonal age-based archival.
+    Does not write to removed_unit_member — use POST /members/remove for admin deletion.
     """
     if not member_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No member IDs provided")
@@ -1326,16 +1355,74 @@ async def blood_donor_search(
     return {"data": results, "total": len(results)}
 
 
-# Member Management
-@router.delete("/members/{member_id}", response_model=dict)
+# Member Management — admin removal (removed_unit_member, NOT seasonal archival)
+@router.post("/members/{member_id}/remove", response_model=dict)
+async def remove_member(
+    member_id: int,
+    body: MemberRemoveRequest,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Remove an active unit member. Seasonal archival uses POST /bulk-archive instead."""
+    await _remove_member_dependencies(db, [member_id])
+    await units_service.remove_unit_member(
+        db,
+        member_id,
+        reason=body.reason,
+        deleted_by_id=current_user.id,
+        confirm_not_archival=body.confirm_not_archival,
+    )
+    return {"message": "Member removed successfully"}
+
+
+@router.post("/members/bulk-remove", response_model=dict)
+async def bulk_remove_members(
+    body: BulkMemberRemoveRequest,
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Remove active unit members. Does not archive — use POST /bulk-archive for that."""
+    member_ids = body.member_ids
+    if not member_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No member IDs provided")
+
+    stmt = select(UnitMembers).where(UnitMembers.id.in_(member_ids))
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+
+    found_ids = {m.id for m in members}
+    missing = set(member_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Members not found: {sorted(missing)}",
+        )
+
+    await _remove_member_dependencies(db, member_ids)
+    removed_count = await units_service.bulk_remove_unit_members(
+        db,
+        members,
+        reason=body.reason,
+        deleted_by_id=current_user.id,
+        confirm_not_archival=body.confirm_not_archival,
+    )
+    return {
+        "message": f"{removed_count} member(s) removed successfully",
+        "removed_count": removed_count,
+    }
+
+
+@router.delete("/members/{member_id}", response_model=dict, deprecated=True)
 async def archive_member(
     member_id: int,
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Archive a unit member."""
-    await units_service.archive_unit_member(db, member_id)
-    return {"message": "Member archived successfully"}
+    """Deprecated — use POST /members/{member_id}/remove with a reason instead."""
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Use POST /admin/units/members/{member_id}/remove with a mandatory reason",
+    )
 
 
 # Password Reset

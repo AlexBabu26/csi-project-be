@@ -62,6 +62,9 @@ from app.units.schemas import (
     RecentArchivedMembersResponse,
     ArchivedMemberConcernRequestCreate,
     ArchivedMemberConcernRequestResponse,
+    RemovedUnitMemberResponse,
+    PendingRemovedMembersResponse,
+    AcknowledgeRemovedMembersRequest,
 )
 from app.units import service as units_service
 from app.units import residence_service
@@ -592,6 +595,40 @@ async def complete_declaration(
     await cycle_service.submit_declaration(db, cycle, member_count, total_fee)
     
     return {"message": "Declaration submitted successfully"}
+
+
+@router.get("/removed-members/pending", response_model=PendingRemovedMembersResponse)
+async def get_pending_removed_members(
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Get members removed by admin that the unit has not yet acknowledged."""
+    data = await units_service.get_pending_removed_members_for_unit(db, current_user.id)
+    members_payload = []
+    for member in data["members"]:
+        payload = RemovedUnitMemberResponse.model_validate(member).model_dump(mode="json")
+        payload["removed_at"] = payload.get("archived_at")
+        payload["removal_type"] = member.removal_type.value if member.removal_type else None
+        members_payload.append(payload)
+    return {
+        "summary": data["summary"],
+        "members": members_payload,
+    }
+
+
+@router.post("/removed-members/acknowledge", response_model=dict)
+async def acknowledge_removed_members(
+    body: AcknowledgeRemovedMembersRequest,
+    current_user: CustomUser = Depends(get_current_unit_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Mark admin-removed member notifications as seen by the unit."""
+    count = await units_service.acknowledge_removed_members(
+        db,
+        current_user.id,
+        removed_member_ids=body.removed_member_ids,
+    )
+    return {"message": f"{count} notification(s) acknowledged", "acknowledged_count": count}
 
 
 @router.get("/archived-members/recent", response_model=RecentArchivedMembersResponse)
