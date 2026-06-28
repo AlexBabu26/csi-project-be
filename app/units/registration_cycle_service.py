@@ -1,7 +1,7 @@
 """Helpers for per-year unit registration cycles."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from app.common.datetime_utils import current_year_ist, now_ist
 
@@ -707,6 +707,134 @@ async def _get_cycle_payments(
     return list(result.scalars().all())
 
 
+def compute_total_paid_for_approved_payments(
+    approved: list[UnitRegistrationPayment],
+) -> int:
+    """
+    Sum amounts recorded as paid across approved proofs (admin-entered on approval).
+
+    Uses the outstanding balance before each proof minus its remaining balance after
+    approval. Earlier proofs in a partial-payment chain are left unchanged by member
+    fee adjustments; only the latest approved proof's balance is recalculated.
+    """
+    if not approved:
+        return 0
+
+    sorted_approved = sorted(approved, key=lambda p: p.submitted_at)
+    total_paid = 0
+    outstanding_before: Optional[int] = None
+
+    for payment in sorted_approved:
+        if outstanding_before is None:
+            outstanding_before = payment.total_amount or 0
+        if payment.balance_amount is None:
+            continue
+        paid = outstanding_before - payment.balance_amount
+        if paid > 0:
+            total_paid += paid
+        outstanding_before = payment.balance_amount
+
+    return total_paid
+
+
+def recalculate_latest_approved_balance(
+    cycle: UnitRegistrationCycle,
+    approved: list[UnitRegistrationPayment],
+) -> None:
+    """Set the latest approved proof's balance from fee owed minus total paid."""
+    if not approved:
+        return
+
+    latest = max(approved, key=lambda p: p.submitted_at)
+    fee_owed = cycle.total_fee_at_submit or 0
+    total_paid = compute_total_paid_for_approved_payments(approved)
+    latest.balance_amount = max(0, fee_owed - total_paid)
+
+
+def build_payment_summary(
+    cycle: UnitRegistrationCycle,
+    approved: list[UnitRegistrationPayment],
+) -> dict[str, Any]:
+    """
+    Human-readable registration payment snapshot for admin and unit UIs.
+
+    payment_credit is the amount already paid above the current fee (e.g. after
+    admin removals). balance_due is additional fee still owed (e.g. after adds).
+    """
+    fee_owed = cycle.total_fee_at_submit or 0
+    member_count = cycle.member_count_at_submit or 0
+    total_paid = compute_total_paid_for_approved_payments(approved)
+    balance_due = max(0, fee_owed - total_paid)
+    payment_credit = max(0, total_paid - fee_owed)
+    return {
+        "member_count": member_count,
+        "fee_owed": fee_owed,
+        "total_paid": total_paid,
+        "balance_due": balance_due,
+        "payment_credit": payment_credit,
+        "is_fully_paid": bool(approved) and balance_due == 0 and total_paid > 0,
+    }
+
+
+def preview_payment_after_member_delta(
+    cycle: UnitRegistrationCycle,
+    approved: list[UnitRegistrationPayment],
+    *,
+    delta_members: int,
+    member_fee: int,
+    unit_fee: int,
+) -> dict[str, Any]:
+    """Dry-run payment summary after adding or removing members (no DB writes)."""
+    current = build_payment_summary(cycle, approved)
+    fee_delta = delta_members * member_fee
+    new_member_count = max(0, (cycle.member_count_at_submit or 0) + delta_members)
+    new_fee = max(
+        unit_fee,
+        (cycle.total_fee_at_submit or 0) + fee_delta,
+    )
+    total_paid = current["total_paid"]
+    balance_due = max(0, new_fee - total_paid)
+    payment_credit = max(0, total_paid - new_fee)
+    return {
+        "current": current,
+        "projected": {
+            "member_count": new_member_count,
+            "fee_owed": new_fee,
+            "total_paid": total_paid,
+            "balance_due": balance_due,
+            "payment_credit": payment_credit,
+            "is_fully_paid": bool(approved) and balance_due == 0 and total_paid > 0,
+        },
+        "delta_members": delta_members,
+        "fee_change": fee_delta,
+    }
+
+
+async def get_registration_payment_summary(
+    db: AsyncSession,
+    registered_user_id: int,
+) -> Optional[dict[str, Any]]:
+    """Payment summary for the active registration season, or None if no cycle."""
+    current_year = await get_current_registration_year(db)
+    cycle = await get_cycle(db, registered_user_id, current_year)
+    if cycle is None:
+        return None
+    if cycle.status not in (DECLARATION_SUBMITTED, REGISTRATION_COMPLETED):
+        return None
+    if cycle.total_fee_at_submit is None:
+        return None
+
+    payments = await _get_cycle_payments(db, cycle.id)
+    approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+    summary = build_payment_summary(cycle, approved)
+    return {
+        **summary,
+        "registration_year": cycle.registration_year,
+        "cycle_id": cycle.id,
+        "has_approved_payment": bool(approved),
+    }
+
+
 async def adjust_fee_for_member_delta(
     db: AsyncSession,
     *,
@@ -717,8 +845,9 @@ async def adjust_fee_for_member_delta(
     After a post-declaration member add or admin removal, update the cycle fee
     snapshot and outstanding payment balance for the current season.
 
-    Only applies when declaration has already been submitted. Positive deltas
-    increase the fee and balance; negative deltas reduce them (balance floors at 0).
+    Only applies when declaration has already been submitted. The cycle fee snapshot
+    is updated and the latest approved proof's remaining balance is recalculated from
+    total paid so far (remove-then-add swaps net to zero correctly).
     """
     if delta_members == 0:
         return False
@@ -759,12 +888,7 @@ async def adjust_fee_for_member_delta(
     payments = await _get_cycle_payments(db, cycle.id)
     approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
     if approved:
-        latest = approved[-1]
-        latest.total_amount = max(
-            unit_fee,
-            (latest.total_amount or cycle.total_fee_at_submit or 0) + fee_delta,
-        )
-        latest.balance_amount = max(0, (latest.balance_amount or 0) + fee_delta)
+        recalculate_latest_approved_balance(cycle, approved)
     elif payments:
         latest = payments[-1]
         if latest.status == PaymentProofStatus.PENDING:

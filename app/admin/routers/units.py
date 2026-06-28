@@ -1103,11 +1103,6 @@ async def restore_archived_member(
         added_registration_cycle_id=cycle.id if cycle else None,
     )
     db.add(active_member)
-    await cycle_service.adjust_fee_for_member_delta(
-        db,
-        registered_user_id=archived.registered_user_id,
-        delta_members=1,
-    )
     await db.delete(archived)
     await db.commit()
 
@@ -1367,6 +1362,118 @@ async def blood_donor_search(
 
 
 # Member Management — admin removal (removed_unit_member, NOT seasonal archival)
+
+
+@router.post("/members/removal-payment-preview", response_model=dict)
+async def preview_member_removal_payment_impact(
+    member_ids: List[int] = Body(..., embed=True),
+    current_user: CustomUser = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """
+    Preview registration payment impact before admin removes members.
+
+    Seasonal archival (bulk-archive) is unrelated to registration payments.
+    """
+    if not member_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No member IDs provided",
+        )
+
+    stmt = select(UnitMembers).where(UnitMembers.id.in_(member_ids))
+    result = await db.execute(stmt)
+    members = list(result.scalars().all())
+
+    found_ids = {m.id for m in members}
+    missing = set(member_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Members not found: {sorted(missing)}",
+        )
+
+    settings_result = await db.execute(select(SiteSettings).limit(1))
+    settings = settings_result.scalar_one_or_none()
+    unit_fee = (
+        settings.unit_registration_fee
+        if settings and settings.unit_registration_fee is not None
+        else 100
+    )
+    member_fee = (
+        settings.unit_member_fee
+        if settings and settings.unit_member_fee is not None
+        else 10
+    )
+    current_year = await cycle_service.get_current_registration_year(db)
+
+    removals_by_unit: dict[int, int] = {}
+    for member in members:
+        removals_by_unit[member.registered_user_id] = (
+            removals_by_unit.get(member.registered_user_id, 0) + 1
+        )
+
+    impacts: list[dict] = []
+    for registered_user_id, remove_count in sorted(removals_by_unit.items()):
+        user_stmt = (
+            select(CustomUser, UnitName.name.label("unit_name"))
+            .outerjoin(UnitName, UnitName.id == CustomUser.unit_name_id)
+            .where(CustomUser.id == registered_user_id)
+        )
+        user_row = (await db.execute(user_stmt)).first()
+        username = user_row[0].username if user_row else str(registered_user_id)
+        unit_name = user_row[1] if user_row else None
+
+        cycle = await cycle_service.get_cycle(db, registered_user_id, current_year)
+        if cycle is None or cycle.status not in (
+            cycle_service.DECLARATION_SUBMITTED,
+            cycle_service.REGISTRATION_COMPLETED,
+        ):
+            impacts.append({
+                "registered_user_id": registered_user_id,
+                "username": username,
+                "unit_name": unit_name,
+                "applies": False,
+                "reason": "Registration declaration not submitted for the current season.",
+                "members_to_remove": remove_count,
+            })
+            continue
+
+        cycle_payments = await cycle_service._get_cycle_payments(db, cycle.id)
+        approved = [
+            p for p in cycle_payments if p.status == PaymentProofStatus.APPROVED
+        ]
+        if not approved:
+            impacts.append({
+                "registered_user_id": registered_user_id,
+                "username": username,
+                "unit_name": unit_name,
+                "applies": False,
+                "reason": "No approved registration payment for the current season.",
+                "members_to_remove": remove_count,
+            })
+            continue
+
+        preview = cycle_service.preview_payment_after_member_delta(
+            cycle,
+            approved,
+            delta_members=-remove_count,
+            member_fee=member_fee,
+            unit_fee=unit_fee,
+        )
+        impacts.append({
+            "registered_user_id": registered_user_id,
+            "username": username,
+            "unit_name": unit_name,
+            "applies": True,
+            "members_to_remove": remove_count,
+            "member_fee": member_fee,
+            **preview,
+        })
+
+    return {"impacts": impacts, "member_count": len(members)}
+
+
 @router.post("/members/{member_id}/remove", response_model=dict)
 async def remove_member(
     member_id: int,
@@ -1500,6 +1607,19 @@ async def list_registration_payments(
     result = await db.execute(stmt)
     rows = result.all()
 
+    cycle_ids = {cycle.id for _, _, _, cycle in rows if cycle is not None}
+    summary_by_cycle: dict[int, dict] = {}
+    for cycle_id in cycle_ids:
+        cycle_payments = await cycle_service._get_cycle_payments(db, cycle_id)
+        approved = [
+            pay for pay in cycle_payments if pay.status == PaymentProofStatus.APPROVED
+        ]
+        cycle_row = next(c for _, _, _, c in rows if c and c.id == cycle_id)
+        summary_by_cycle[cycle_id] = {
+            **cycle_service.build_payment_summary(cycle_row, approved),
+            "registration_member_count": cycle_row.member_count_at_submit,
+        }
+
     return [
         {
             "id": p.id,
@@ -1511,6 +1631,18 @@ async def list_registration_payments(
             "total_amount": p.total_amount,
             "balance_amount": p.balance_amount,
             "registration_total_amount": cycle.total_fee_at_submit if cycle else None,
+            "registration_member_count": (
+                summary_by_cycle[cycle.id]["member_count"] if cycle and cycle.id in summary_by_cycle else None
+            ),
+            "total_paid": (
+                summary_by_cycle[cycle.id]["total_paid"] if cycle and cycle.id in summary_by_cycle else None
+            ),
+            "payment_credit": (
+                summary_by_cycle[cycle.id]["payment_credit"] if cycle and cycle.id in summary_by_cycle else None
+            ),
+            "balance_due": (
+                summary_by_cycle[cycle.id]["balance_due"] if cycle and cycle.id in summary_by_cycle else None
+            ),
             "status": p.status.value,
             "rejection_note": p.rejection_note,
             "submitted_at": p.submitted_at.isoformat(),

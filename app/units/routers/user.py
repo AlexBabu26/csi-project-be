@@ -1282,6 +1282,9 @@ async def get_payment_status(
     )
     payments = payment_data["payments"]
 
+    approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+    payment_summary = cycle_service.build_payment_summary(cycle, approved)
+
     items = []
     for p in payments:
         file_url = get_public_file_url(p.file_path) if p.file_path else None
@@ -1306,6 +1309,9 @@ async def get_payment_status(
         "balance_amount": payment_data["balance_amount"],
         "registration_total_amount": cycle.total_fee_at_submit,
         "registration_member_count": cycle.member_count_at_submit,
+        "total_paid": payment_summary["total_paid"],
+        "payment_credit": payment_summary["payment_credit"],
+        "balance_due": payment_summary["balance_due"],
         "latest_rejection_note": payment_data["latest_rejection_note"],
         "qr_url": qr_url,
         "registration_year": cycle.registration_year,
