@@ -710,7 +710,7 @@ async def list_all_units(
     """List all units with district information."""
     stmt = select(UnitName).options(
         selectinload(UnitName.district)
-    ).order_by(UnitName.district_id, UnitName.name)
+    ).order_by(UnitName.clergy_district_id, UnitName.name)
     result = await db.execute(stmt)
     units = list(result.scalars().all())
     

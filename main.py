@@ -59,18 +59,8 @@ app.include_router(ym_admin.router, prefix="/api/yuvalokham/admin", tags=["yuval
 
 @app.get("/api/health", tags=["system"])
 async def health() -> dict:
-    """Health check endpoint that pings the database to keep connections warm."""
-    from sqlalchemy import text
-    from app.common.db import get_async_engine
-
-    try:
-        async with get_async_engine().connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {str(e)}"
-
-    return {"status": "ok", "database": db_status}
+    """Lightweight health check (does not block on database)."""
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

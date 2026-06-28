@@ -577,9 +577,6 @@ async def get_all_conference_info(
     # Get all delegates for the conference
     stmt = select(ConferenceDelegate).where(
         ConferenceDelegate.conference_id == conference_id
-    ).options(
-        selectinload(ConferenceDelegate.officials),
-        selectinload(ConferenceDelegate.members)
     )
     result = await db.execute(stmt)
     delegates = list(result.scalars().all())

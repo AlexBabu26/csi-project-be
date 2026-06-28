@@ -295,9 +295,15 @@ async def admin_home_page(
 async def list_all_units(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """List all registered units. Accessible via /all or root path."""
+    """List all registered units. Accessible via /all or root path. Cached 5 minutes."""
     current_year = await cycle_service.get_current_registration_year(db)
+    cache_key = f"admin_units_list:{current_year}"
+    if not refresh:
+        cached = get_cache(cache_key)
+        if cached is not None:
+            return cached
 
     stmt = select(UnitRegistrationData).where(
         UnitRegistrationData.registered_user_id != current_user.id
@@ -383,7 +389,7 @@ async def list_all_units(
         for row in member_counts_result.all():
             member_counts_by_user[row.registered_user_id] = row.count or 0
     
-    return [
+    result = [
         {
             "id": unit_data.id,
             "user_id": unit_data.registered_user_id,
@@ -417,6 +423,9 @@ async def list_all_units(
         }
         for unit_data in units_data
     ]
+
+    set_cache(cache_key, result, ttl_seconds=300)
+    return result
 
 
 @router.get("/not-onboarded", response_model=List[dict])
@@ -623,11 +632,19 @@ async def reject_councilor_change_request(
 # Member Add Request Endpoints
 @router.get("/member-add-requests", response_model=List[UnitMemberAddRequestResponse])
 async def list_member_add_requests(
+    refresh: bool = Query(False, description="Force refresh cache"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all member add requests."""
-    return await units_service.get_member_add_requests(db)
+    cache_key = "admin_member_add_requests"
+    if not refresh:
+        cached = get_cache(cache_key)
+        if cached is not None:
+            return cached
+    payload = await units_service.get_member_add_requests(db)
+    set_cache(cache_key, payload, ttl_seconds=120)
+    return payload
 
 
 @router.put("/member-add-requests/{request_id}/approve", response_model=UnitMemberAddRequestResponse)
@@ -638,7 +655,10 @@ async def approve_member_add_request(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Approve a member add request."""
-    return await units_service.approve_member_add_request(db, request_id)
+    result = await units_service.approve_member_add_request(db, request_id)
+    clear_cache("admin_member_add_requests")
+    clear_cache("admin_units_list")
+    return result
 
 
 @router.put("/member-add-requests/{request_id}/reject", response_model=UnitMemberAddRequestResponse)
@@ -649,7 +669,9 @@ async def reject_member_add_request(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Reject a member add request."""
-    return await units_service.reject_member_add_request(db, request_id)
+    result = await units_service.reject_member_add_request(db, request_id)
+    clear_cache("admin_member_add_requests")
+    return result
 
 
 # Archived Member Concern Request Endpoints
@@ -1578,10 +1600,17 @@ async def reset_password(
 async def list_registration_payments(
     payment_status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED"),
     registration_year: Optional[int] = Query(None, description="Filter by registration year"),
+    refresh: bool = Query(False, description="Force refresh cache"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all unit registration payment proof submissions."""
+    cache_key = f"admin_registration_payments:{registration_year}:{payment_status or 'all'}"
+    if not refresh:
+        cached = get_cache(cache_key)
+        if cached is not None:
+            return cached
+
     stmt = (
         select(UnitRegistrationPayment, CustomUser, UnitName, UnitRegistrationCycle)
         .join(CustomUser, CustomUser.id == UnitRegistrationPayment.registered_user_id)
@@ -1620,7 +1649,7 @@ async def list_registration_payments(
             "registration_member_count": cycle_row.member_count_at_submit,
         }
 
-    return [
+    payload = [
         {
             "id": p.id,
             "registered_user_id": p.registered_user_id,
@@ -1650,6 +1679,8 @@ async def list_registration_payments(
         }
         for p, u, un, cycle in rows
     ]
+    set_cache(cache_key, payload, ttl_seconds=120)
+    return payload
 
 
 @router.post("/registration-payments/{payment_id}/approve", response_model=dict)
@@ -1716,6 +1747,10 @@ async def approve_registration_payment(
     payment.reviewed_by_id = current_user.id
     await db.commit()
 
+    clear_cache("admin_units_list")
+    clear_cache("admin_registration_payments")
+    clear_cache("admin_dashboard")
+
     return {
         "message": "Payment approved successfully",
         "id": payment_id,
@@ -1747,6 +1782,10 @@ async def reject_registration_payment(
     payment.reviewed_at = now_ist()
     payment.reviewed_by_id = current_user.id
     await db.commit()
+
+    clear_cache("admin_units_list")
+    clear_cache("admin_registration_payments")
+    clear_cache("admin_dashboard")
 
     return {"message": "Payment rejected", "id": payment_id}
 
