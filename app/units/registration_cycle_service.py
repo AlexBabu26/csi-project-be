@@ -707,6 +707,28 @@ async def _get_cycle_payments(
     return list(result.scalars().all())
 
 
+async def get_payments_by_cycle_ids(
+    db: AsyncSession,
+    cycle_ids: list[int],
+) -> dict[int, list[UnitRegistrationPayment]]:
+    """Load all payment proofs for many cycles in one query."""
+    if not cycle_ids:
+        return {}
+
+    result = await db.execute(
+        select(UnitRegistrationPayment)
+        .where(UnitRegistrationPayment.registration_cycle_id.in_(cycle_ids))
+        .order_by(
+            UnitRegistrationPayment.registration_cycle_id,
+            UnitRegistrationPayment.submitted_at.asc(),
+        )
+    )
+    by_cycle: dict[int, list[UnitRegistrationPayment]] = {cid: [] for cid in cycle_ids}
+    for payment in result.scalars().all():
+        by_cycle[payment.registration_cycle_id].append(payment)
+    return by_cycle
+
+
 def compute_total_paid_for_approved_payments(
     approved: list[UnitRegistrationPayment],
 ) -> int:

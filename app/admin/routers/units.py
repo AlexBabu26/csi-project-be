@@ -1636,14 +1636,20 @@ async def list_registration_payments(
     result = await db.execute(stmt)
     rows = result.all()
 
-    cycle_ids = {cycle.id for _, _, _, cycle in rows if cycle is not None}
+    cycles_by_id: dict[int, UnitRegistrationCycle] = {}
+    for _, _, _, cycle in rows:
+        if cycle is not None:
+            cycles_by_id[cycle.id] = cycle
+
+    payments_by_cycle = await cycle_service.get_payments_by_cycle_ids(
+        db, list(cycles_by_id.keys())
+    )
     summary_by_cycle: dict[int, dict] = {}
-    for cycle_id in cycle_ids:
-        cycle_payments = await cycle_service._get_cycle_payments(db, cycle_id)
+    for cycle_id, cycle_row in cycles_by_id.items():
+        cycle_payments = payments_by_cycle.get(cycle_id, [])
         approved = [
             pay for pay in cycle_payments if pay.status == PaymentProofStatus.APPROVED
         ]
-        cycle_row = next(c for _, _, _, c in rows if c and c.id == cycle_id)
         summary_by_cycle[cycle_id] = {
             **cycle_service.build_payment_summary(cycle_row, approved),
             "registration_member_count": cycle_row.member_count_at_submit,
