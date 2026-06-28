@@ -489,7 +489,8 @@ async def add_unit_councilor(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Add a unit councilor."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id, require_in_progress=False)
+    cycle_service.require_cycle_open_for_councilor_edits(cycle)
 
     # Verify member exists
     stmt = select(UnitMembers).where(
@@ -530,10 +531,14 @@ async def add_unit_councilor(
     )
     
     db.add(councilor)
+    reopened = cycle_service.reopen_councilors_after_roster_change(cycle)
     await db.commit()
     await db.refresh(councilor)
-    
-    return {"message": "Member added to unit council successfully", "councilor_id": councilor.id}
+
+    message = "Member added to unit council successfully"
+    if reopened:
+        message += ". Declaration was reopened — review councilors and submit again."
+    return {"message": message, "councilor_id": councilor.id}
 
 
 @router.post("/councilors/confirm", response_model=dict)
@@ -556,7 +561,8 @@ async def delete_unit_councilor(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Remove a unit councilor during registration."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id, require_in_progress=False)
+    cycle_service.require_cycle_open_for_councilor_edits(cycle)
 
     stmt = select(UnitCouncilor).where(
         and_(
@@ -574,9 +580,13 @@ async def delete_unit_councilor(
         )
 
     await db.delete(councilor)
+    reopened = cycle_service.reopen_councilors_after_roster_change(cycle)
     await db.commit()
 
-    return {"message": "Councilor removed successfully"}
+    message = "Councilor removed successfully"
+    if reopened:
+        message += ". Declaration was reopened — review councilors and submit again."
+    return {"message": message}
 
 
 @router.post("/declaration", response_model=dict)
@@ -1139,7 +1149,8 @@ async def update_councilor(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Update a councilor."""
-    await _get_wizard_cycle(db, current_user.id)
+    cycle = await _get_wizard_cycle(db, current_user.id, require_in_progress=False)
+    cycle_service.require_cycle_open_for_councilor_edits(cycle)
 
     # Get councilor
     stmt = select(UnitCouncilor).where(
@@ -1174,9 +1185,13 @@ async def update_councilor(
         )
     
     councilor.unit_member_id = data.unit_member_id
+    reopened = cycle_service.reopen_councilors_after_roster_change(cycle)
     await db.commit()
-    
-    return {"message": "Councilor updated successfully"}
+
+    message = "Councilor updated successfully"
+    if reopened:
+        message += ". Declaration was reopened — review councilors and submit again."
+    return {"message": message}
 
 
 @router.get("/finish-registration", response_model=dict)

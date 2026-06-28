@@ -85,7 +85,7 @@ def seed_database():
         member = UnitMembers(
             registered_user_id=unit_user.id,
             name="Test Member",
-            gender="Male",
+            gender="M",
             number="9876543210"
         )
         db.add(member)

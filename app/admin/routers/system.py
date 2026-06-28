@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash, get_admin_or_blood_bank_user
 from app.common.cache import get_cache, set_cache
-from sqlalchemy import func, and_, case, distinct
+from sqlalchemy import func, and_, case, distinct, or_
 from sqlalchemy.orm import selectinload
 from app.auth.models import (
     CustomUser,
@@ -127,11 +127,13 @@ async def get_district_wise_data(
             district_data[row[0]]["completed_units"] = row[2] or 0
     
     # Single query for member counts per district
+    male_gender = or_(UnitMembers.gender == 'M', UnitMembers.gender == 'Male')
+    female_gender = or_(UnitMembers.gender == 'F', UnitMembers.gender == 'Female')
     stmt = select(
         UnitName.clergy_district_id,
         func.count(UnitMembers.id).label('total'),
-        func.count(case((UnitMembers.gender == 'M', 1))).label('male'),
-        func.count(case((UnitMembers.gender == 'F', 1))).label('female')
+        func.count(case((male_gender, 1))).label('male'),
+        func.count(case((female_gender, 1))).label('female')
     ).select_from(UnitMembers).join(
         CustomUser, UnitMembers.registered_user_id == CustomUser.id
     ).join(

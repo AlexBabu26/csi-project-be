@@ -19,6 +19,12 @@ from app.units.models import (
 
 REGISTRATION_COMPLETED = "Registration Completed"
 DECLARATION_SUBMITTED = "Declaration Submitted"
+UNIT_OFFICIALS_COMPLETED = "Unit Officials Completed"
+UNIT_COUNCILORS_COMPLETED = "Unit Councilors Completed"
+
+COUNCILORS_REOPEN_STATUSES = frozenset(
+    {UNIT_COUNCILORS_COMPLETED, DECLARATION_SUBMITTED}
+)
 
 CHANGE_REQUEST_REQUIRED_MSG = (
     "This update must be submitted as a change request. "
@@ -197,6 +203,31 @@ def require_cycle_in_progress(cycle: UnitRegistrationCycle) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Declaration has been submitted. Awaiting admin completion of registration.",
         )
+
+
+def require_cycle_open_for_councilor_edits(cycle: UnitRegistrationCycle) -> None:
+    """Allow councilor roster edits until admin marks registration complete."""
+    if cycle.status == REGISTRATION_COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration for this year is complete. Use change request workflows for updates.",
+        )
+
+
+async def reopen_councilors_after_roster_change(
+    cycle: UnitRegistrationCycle,
+) -> bool:
+    """
+    Move the unit back to the councilors wizard step when the roster changes
+    after councilors were confirmed or the declaration was submitted.
+    """
+    if cycle.status not in COUNCILORS_REOPEN_STATUSES:
+        return False
+
+    cycle.status = UNIT_OFFICIALS_COMPLETED
+    cycle.member_count_at_submit = None
+    cycle.total_fee_at_submit = None
+    return True
 
 
 def require_fresh_registration_for_direct_edits(cycle: UnitRegistrationCycle) -> None:

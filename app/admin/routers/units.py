@@ -41,6 +41,7 @@ from app.units.models import (
     UnitRegistrationPayment,
     PaymentProofStatus,
 )
+from app.units.gender_utils import normalize_member_gender
 from app.units import registration_cycle_service as cycle_service
 from app.units.schemas import (
     UnitTransferRequestResponse,
@@ -115,7 +116,7 @@ async def admin_home_page(
     refresh: bool = Query(False, description="Force refresh cache"),
 ):
     """Get admin dashboard statistics. Accessible via /home or /dashboard. Cached for 5 minutes."""
-    from sqlalchemy import case, distinct
+    from sqlalchemy import case, distinct, or_
     
     cache_key = "admin_dashboard"
     
@@ -228,10 +229,12 @@ async def admin_home_page(
         pending_requests_count += req_result.scalar() or 0
     
     # Single query for all member counts (total, male, female)
+    male_gender = or_(UnitMembers.gender == 'M', UnitMembers.gender == 'Male')
+    female_gender = or_(UnitMembers.gender == 'F', UnitMembers.gender == 'Female')
     stmt = select(
         func.count(UnitMembers.id).label('total'),
-        func.count(case((UnitMembers.gender == 'M', 1))).label('male'),
-        func.count(case((UnitMembers.gender == 'F', 1))).label('female')
+        func.count(case((male_gender, 1))).label('male'),
+        func.count(case((female_gender, 1))).label('female')
     ).select_from(UnitMembers)
     result = await db.execute(stmt)
     member_counts = result.one()
@@ -960,9 +963,6 @@ async def _remove_member_dependencies(db: AsyncSession, member_ids: List[int]) -
     individual_participation_ids = select(IndividualEventParticipation.id).where(
         IndividualEventParticipation.participant_id.in_(member_ids)
     )
-    councilor_ids = select(UnitCouncilor.id).where(
-        UnitCouncilor.unit_member_id.in_(member_ids)
-    )
 
     await db.execute(
         delete(AppealPayments).where(AppealPayments.appeal_id.in_(appeal_ids))
@@ -994,7 +994,6 @@ async def _remove_member_dependencies(db: AsyncSession, member_ids: List[int]) -
     await db.execute(
         delete(UnitCouncilorChangeRequest).where(
             or_(
-                UnitCouncilorChangeRequest.unit_councilor_id.in_(councilor_ids),
                 UnitCouncilorChangeRequest.unit_member_id.in_(member_ids),
                 UnitCouncilorChangeRequest.original_unit_member_id.in_(member_ids),
             )
@@ -1096,7 +1095,7 @@ async def restore_archived_member(
     active_member = UnitMembers(
         registered_user_id=archived.registered_user_id,
         name=archived.name,
-        gender=archived.gender,
+        gender=normalize_member_gender(archived.gender),
         dob=archived.dob,
         number=archived.number,
         qualification=archived.qualification,

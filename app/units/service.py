@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
@@ -41,6 +41,7 @@ from app.units.schemas import (
 )
 from app.units import registration_cycle_service as cycle_service
 from app.units import residence_service
+from app.units.gender_utils import normalize_member_gender
 
 
 # Unit Transfer Request Functions
@@ -466,7 +467,7 @@ async def approve_member_info_change(
     if change_request.name:
         member.name = change_request.name
     if change_request.gender:
-        member.gender = change_request.gender
+        member.gender = normalize_member_gender(change_request.gender)
     if change_request.dob:
         member.dob = change_request.dob
     if change_request.blood_group:
@@ -909,6 +910,7 @@ async def create_councilor_change_request(
         )
     
     # If new member specified, verify it exists and belongs to user
+    new_member = None
     if data.unit_member_id:
         stmt = select(UnitMembers).where(
             and_(
@@ -924,12 +926,20 @@ async def create_councilor_change_request(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="New unit member not found or does not belong to you"
             )
+
+    original_member_stmt = select(UnitMembers).where(
+        UnitMembers.id == councilor.unit_member_id
+    )
+    original_member_result = await db.execute(original_member_stmt)
+    original_member = original_member_result.scalar_one()
     
     # Create change request
     change_request = UnitCouncilorChangeRequest(
         unit_councilor_id=data.unit_councilor_id,
         unit_member_id=data.unit_member_id,
         original_unit_member_id=councilor.unit_member_id,
+        original_member_name=original_member.name,
+        new_member_name=new_member.name if new_member else None,
         reason=data.reason,
         proof=data.proof,
         status=RequestStatus.PENDING,
@@ -980,11 +990,22 @@ async def approve_councilor_change(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No new member specified in request"
         )
+
+    if not change_request.unit_councilor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The councilor for this request was removed and can no longer be updated",
+        )
     
     # Get the councilor
     stmt = select(UnitCouncilor).where(UnitCouncilor.id == change_request.unit_councilor_id)
     result = await db.execute(stmt)
-    councilor = result.scalar_one()
+    councilor = result.scalar_one_or_none()
+    if not councilor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The councilor for this request was removed and can no longer be updated",
+        )
     
     # Apply change
     councilor.unit_member_id = change_request.unit_member_id
@@ -1036,11 +1057,22 @@ async def revert_councilor_change(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No original member to revert to"
         )
+
+    if not change_request.unit_councilor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The councilor for this request was removed and can no longer be reverted",
+        )
     
     # Get the councilor
     stmt = select(UnitCouncilor).where(UnitCouncilor.id == change_request.unit_councilor_id)
     result = await db.execute(stmt)
-    councilor = result.scalar_one()
+    councilor = result.scalar_one_or_none()
+    if not councilor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The councilor for this request was removed and can no longer be reverted",
+        )
     
     # Restore original member
     councilor.unit_member_id = change_request.original_unit_member_id
@@ -1177,7 +1209,7 @@ async def approve_member_add_request(
     new_member = UnitMembers(
         registered_user_id=add_request.registered_user_id,
         name=add_request.name,
-        gender=add_request.gender,
+        gender=normalize_member_gender(add_request.gender),
         dob=add_request.dob,
         number=add_request.number,
         qualification=add_request.qualification,
@@ -1380,7 +1412,7 @@ def _summarize_removed_members(members: List[RemovedUnitMember]) -> Dict[str, in
     male = 0
     female = 0
     for member in members:
-        gender = _normalize_gender(member.gender)
+        gender = normalize_member_gender(member.gender)
         if gender == "M":
             male += 1
         elif gender == "F":
@@ -1632,14 +1664,14 @@ def _councilor_change_request_dict(
         "reason": req.reason,
         "unit_member_id": req.unit_member_id,
         "original_unit_member_id": req.original_unit_member_id,
+        "original_member_name": original_member_name or req.original_member_name,
+        "new_member_name": new_member_name or req.new_member_name,
         "proof": req.proof,
         "status": req.status,
         "created_at": req.created_at,
         "updated_at": req.updated_at,
         "unit_id": unit_id,
         "unit_name": unit_name,
-        "original_member_name": original_member_name,
-        "new_member_name": new_member_name,
     }
 
 
@@ -1655,13 +1687,16 @@ async def get_councilor_change_requests(
             UnitName.name.label("unit_name"),
             CustomUser.id.label("unit_id"),
         )
-        .join(UnitCouncilor, UnitCouncilorChangeRequest.unit_councilor_id == UnitCouncilor.id)
-        .join(CustomUser, UnitCouncilor.registered_user_id == CustomUser.id)
+        .outerjoin(
+            UnitMembers,
+            UnitCouncilorChangeRequest.original_unit_member_id == UnitMembers.id,
+        )
+        .outerjoin(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
         .outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
     )
 
     if user_id:
-        stmt = stmt.where(UnitCouncilor.registered_user_id == user_id)
+        stmt = stmt.where(UnitMembers.registered_user_id == user_id)
     if status_filter:
         stmt = stmt.where(UnitCouncilorChangeRequest.status == status_filter)
 
@@ -1690,12 +1725,16 @@ async def get_councilor_change_requests(
             unit_id=unit_id,
             unit_name=unit_name,
             original_member_name=(
-                member_names.get(req.original_unit_member_id)
-                if req.original_unit_member_id
-                else None
+                req.original_member_name
+                or (
+                    member_names.get(req.original_unit_member_id)
+                    if req.original_unit_member_id
+                    else None
+                )
             ),
             new_member_name=(
-                member_names.get(req.unit_member_id) if req.unit_member_id else None
+                req.new_member_name
+                or (member_names.get(req.unit_member_id) if req.unit_member_id else None)
             ),
         )
         for req, unit_name, unit_id in rows
@@ -1781,22 +1820,11 @@ async def get_member_add_requests(
     ]
 
 
-def _normalize_gender(gender: Optional[str]) -> Optional[str]:
-    if not gender:
-        return None
-    value = gender.strip().upper()
-    if value in ("M", "MALE"):
-        return "M"
-    if value in ("F", "FEMALE"):
-        return "F"
-    return value
-
-
 def _summarize_archived_members(members: List[ArchivedUnitMember]) -> Dict[str, int]:
     male = 0
     female = 0
     for member in members:
-        gender = _normalize_gender(member.gender)
+        gender = normalize_member_gender(member.gender)
         if gender == "M":
             male += 1
         elif gender == "F":
@@ -2166,7 +2194,7 @@ async def get_unit_my_requests(
             "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
             "unitId": req.get("unit_id") or user_id,
             "unitName": req.get("unit_name") or unit_name or "",
-            "councilorId": req["unit_councilor_id"],
+            "councilorId": req.get("unit_councilor_id"),
             "originalMemberId": original_member_id,
             "originalMemberName": req.get("original_member_name") or f"Member #{original_member_id}",
             "newMemberId": new_member_id,

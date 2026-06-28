@@ -16,6 +16,7 @@ from app.common.storage import save_upload_file
 from app.common.cache import get_cache, set_cache
 from app.admin.routers.site import get_public_file_url
 from app.auth.models import CustomUser, UnitMembers, UnitName, ClergyDistrict, UserType
+from app.units.gender_utils import normalize_member_gender, validate_member_gender
 from app.kalamela.models import (
     IndividualEvent,
     GroupEvent,
@@ -803,7 +804,7 @@ async def edit_member(
     
     member.name = name
     if gender is not None:
-        member.gender = gender
+        member.gender = validate_member_gender(gender)
     if dob is not None:
         member.dob = dob
     if number is not None:

@@ -7,6 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.auth.models import ResidenceLocation
+from app.units.gender_utils import validate_member_gender
 
 
 class RequestStatus(str, Enum):
@@ -36,6 +37,11 @@ class ArchivedUnitMemberBase(BaseModel):
     number: str = Field(..., min_length=1, max_length=30)
     qualification: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[str] = Field(None, max_length=10)
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: Optional[str]) -> Optional[str]:
+        return validate_member_gender(v)
 
 
 class ArchivedUnitMemberResponse(ArchivedUnitMemberBase):
@@ -213,6 +219,11 @@ class UnitMemberChangeRequestCreate(UnitMemberChangeRequestBase):
     residence_state_id: Optional[int] = None
     residence_city_id: Optional[int] = None
     proof: str = Field(..., description="File path to proof document")
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: Optional[str]) -> Optional[str]:
+        return validate_member_gender(v)
     
     @field_validator("proof")
     @classmethod
@@ -363,10 +374,12 @@ class UnitCouncilorChangeRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    unit_councilor_id: int
+    unit_councilor_id: Optional[int] = None
     reason: str  # No min_length for response - existing data may have shorter values
     unit_member_id: Optional[int]
     original_unit_member_id: Optional[int]
+    original_member_name: Optional[str] = None
+    new_member_name: Optional[str] = None
     proof: str
     status: RequestStatus
     created_at: datetime
@@ -430,6 +443,14 @@ class UnitMemberAddRequestBase(BaseModel):
         if v not in VALID_BLOOD_GROUPS:
             raise ValueError(f"Invalid blood group. Must be one of: {', '.join(sorted(VALID_BLOOD_GROUPS))}")
         return v
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: str) -> str:
+        normalized = validate_member_gender(v)
+        if normalized is None:
+            raise ValueError("Gender is required")
+        return normalized
 
     @model_validator(mode='after')
     def validate_residence(self):
@@ -521,6 +542,11 @@ class UnitMemberBase(BaseModel):
     residence_country_name: Optional[str] = None
     residence_country_id: Optional[int] = None
 
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: Optional[str]) -> Optional[str]:
+        return validate_member_gender(v)
+
 
 def _validate_residence_fields(
     residence_location: Optional[ResidenceLocation],
@@ -566,6 +592,11 @@ class UnitMemberUpdate(BaseModel):
     residence_location: Optional[ResidenceLocation] = None
     residence_state_id: Optional[int] = None
     residence_city_id: Optional[int] = None
+
+    @field_validator("gender", mode="before")
+    @classmethod
+    def normalize_gender(cls, v: Optional[str]) -> Optional[str]:
+        return validate_member_gender(v)
 
     @model_validator(mode='after')
     def validate_residence_update(self):

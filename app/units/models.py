@@ -258,13 +258,18 @@ class UnitCouncilorChangeRequest(Base):
     __tablename__ = "unit_councilor_change_request"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    unit_councilor_id: Mapped[int] = mapped_column(
-        ForeignKey("unit_councilor.id"), nullable=False, index=True
+    # Kept for reference and approve/revert when the councilor still exists (no FK).
+    unit_councilor_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
     )
-    
+
     # New unit member selection
     unit_member_id: Mapped[Optional[int]] = mapped_column(ForeignKey("unit_members.id"))
     original_unit_member_id: Mapped[Optional[int]] = mapped_column(ForeignKey("unit_members.id"))
+
+    # Snapshotted at request creation for audit when councilor/member rows are removed.
+    original_member_name: Mapped[Optional[str]] = mapped_column(String(255))
+    new_member_name: Mapped[Optional[str]] = mapped_column(String(255))
     
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     proof: Mapped[str] = mapped_column(String(500), nullable=False)  # File path
