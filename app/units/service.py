@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import delete, select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
@@ -42,6 +42,81 @@ from app.units.schemas import (
 from app.units import registration_cycle_service as cycle_service
 from app.units import residence_service
 from app.units.gender_utils import normalize_member_gender
+from app.kalamela.models import (
+    Appeal,
+    AppealPayments,
+    GroupEventParticipation,
+    IndividualEventParticipation,
+    IndividualEventScoreCard,
+    KalamelaExcludeMembers,
+)
+from app.conference.models import ConferenceDelegate
+
+
+async def remove_member_dependencies(db: AsyncSession, member_ids: List[int]) -> None:
+    """Remove records that reference unit_members before archive/delete."""
+    if not member_ids:
+        return
+
+    appeal_ids = select(Appeal.id).where(Appeal.added_by_id.in_(member_ids))
+    individual_participation_ids = select(IndividualEventParticipation.id).where(
+        IndividualEventParticipation.participant_id.in_(member_ids)
+    )
+
+    await db.execute(
+        delete(AppealPayments).where(AppealPayments.appeal_id.in_(appeal_ids))
+    )
+    await db.execute(delete(Appeal).where(Appeal.added_by_id.in_(member_ids)))
+    await db.execute(
+        delete(IndividualEventScoreCard).where(
+            or_(
+                IndividualEventScoreCard.participant_id.in_(member_ids),
+                IndividualEventScoreCard.event_participation_id.in_(
+                    individual_participation_ids
+                ),
+            )
+        )
+    )
+    await db.execute(
+        delete(IndividualEventParticipation).where(
+            IndividualEventParticipation.participant_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(GroupEventParticipation).where(
+            GroupEventParticipation.participant_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(KalamelaExcludeMembers).where(
+            KalamelaExcludeMembers.members_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(UnitCouncilorChangeRequest).where(
+            or_(
+                UnitCouncilorChangeRequest.unit_member_id.in_(member_ids),
+                UnitCouncilorChangeRequest.original_unit_member_id.in_(member_ids),
+            )
+        )
+    )
+    await db.execute(
+        delete(UnitCouncilor).where(UnitCouncilor.unit_member_id.in_(member_ids))
+    )
+    await db.execute(
+        delete(UnitMemberChangeRequest).where(
+            UnitMemberChangeRequest.unit_member_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(UnitTransferRequest).where(
+            UnitTransferRequest.unit_member_id.in_(member_ids)
+        )
+    )
+    await db.execute(
+        delete(ConferenceDelegate).where(ConferenceDelegate.members_id.in_(member_ids))
+    )
+    await db.flush()
 
 
 # Unit Transfer Request Functions

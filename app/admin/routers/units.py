@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, status, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select, func, and_, or_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,15 +55,6 @@ from app.units.schemas import (
     BulkMemberRemoveRequest,
 )
 from app.units import service as units_service
-from app.kalamela.models import (
-    Appeal,
-    AppealPayments,
-    GroupEventParticipation,
-    IndividualEventParticipation,
-    IndividualEventScoreCard,
-    KalamelaExcludeMembers,
-)
-from app.conference.models import ConferenceDelegate
 from app.common.exporter import (
     create_archived_members_csv,
     create_archived_members_excel,
@@ -976,70 +967,6 @@ async def archive_preview(
 
 # ── Bulk Archive ──────────────────────────────────────────────────────────────
 
-async def _remove_member_dependencies(db: AsyncSession, member_ids: List[int]) -> None:
-    """Remove records that reference unit_members before archive/delete."""
-    if not member_ids:
-        return
-
-    appeal_ids = select(Appeal.id).where(Appeal.added_by_id.in_(member_ids))
-    individual_participation_ids = select(IndividualEventParticipation.id).where(
-        IndividualEventParticipation.participant_id.in_(member_ids)
-    )
-
-    await db.execute(
-        delete(AppealPayments).where(AppealPayments.appeal_id.in_(appeal_ids))
-    )
-    await db.execute(delete(Appeal).where(Appeal.added_by_id.in_(member_ids)))
-    await db.execute(
-        delete(IndividualEventScoreCard).where(
-            or_(
-                IndividualEventScoreCard.participant_id.in_(member_ids),
-                IndividualEventScoreCard.event_participation_id.in_(individual_participation_ids),
-            )
-        )
-    )
-    await db.execute(
-        delete(IndividualEventParticipation).where(
-            IndividualEventParticipation.participant_id.in_(member_ids)
-        )
-    )
-    await db.execute(
-        delete(GroupEventParticipation).where(
-            GroupEventParticipation.participant_id.in_(member_ids)
-        )
-    )
-    await db.execute(
-        delete(KalamelaExcludeMembers).where(
-            KalamelaExcludeMembers.members_id.in_(member_ids)
-        )
-    )
-    await db.execute(
-        delete(UnitCouncilorChangeRequest).where(
-            or_(
-                UnitCouncilorChangeRequest.unit_member_id.in_(member_ids),
-                UnitCouncilorChangeRequest.original_unit_member_id.in_(member_ids),
-            )
-        )
-    )
-    await db.execute(
-        delete(UnitCouncilor).where(UnitCouncilor.unit_member_id.in_(member_ids))
-    )
-    await db.execute(
-        delete(UnitMemberChangeRequest).where(
-            UnitMemberChangeRequest.unit_member_id.in_(member_ids)
-        )
-    )
-    await db.execute(
-        delete(UnitTransferRequest).where(
-            UnitTransferRequest.unit_member_id.in_(member_ids)
-        )
-    )
-    await db.execute(
-        delete(ConferenceDelegate).where(ConferenceDelegate.members_id.in_(member_ids))
-    )
-    await db.flush()
-
-
 @router.post("/bulk-archive", response_model=dict)
 async def bulk_archive_members(
     member_ids: List[int] = Body(..., embed=True),
@@ -1067,7 +994,7 @@ async def bulk_archive_members(
             detail=f"Members not found: {sorted(missing)}",
         )
 
-    await _remove_member_dependencies(db, member_ids)
+    await units_service.remove_member_dependencies(db, member_ids)
 
     archived_count = 0
     for member in members:
@@ -1504,7 +1431,7 @@ async def remove_member(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Remove an active unit member. Seasonal archival uses POST /bulk-archive instead."""
-    await _remove_member_dependencies(db, [member_id])
+    await units_service.remove_member_dependencies(db, [member_id])
     await units_service.remove_unit_member(
         db,
         member_id,
@@ -1538,7 +1465,7 @@ async def bulk_remove_members(
             detail=f"Members not found: {sorted(missing)}",
         )
 
-    await _remove_member_dependencies(db, member_ids)
+    await units_service.remove_member_dependencies(db, member_ids)
     removed_count = await units_service.bulk_remove_unit_members(
         db,
         members,

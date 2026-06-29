@@ -40,6 +40,7 @@ from app.units.models import (
     PaymentProofStatus,
 )
 from app.units import registration_cycle_service as cycle_service
+from app.units import service as units_service
 from app.units.payment_ocr import extract_amount_from_pdf_bytes
 from app.units.schemas import (
     UnitDetailsCreate,
@@ -1133,7 +1134,9 @@ async def delete_member(
     
     for councilor in councilors:
         await db.delete(councilor)
-    
+
+    await units_service.remove_member_dependencies(db, [member_id])
+
     # Delete member
     await db.delete(member)
     await db.commit()
