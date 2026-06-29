@@ -33,6 +33,16 @@ CSI Youth Movement Ktm
     assert parse_payment_amount_from_text(text) == 820
 
 
+def test_parse_one_eighty_misread():
+    text = """
+2180.00
+Paid to
+CSI Youth Movement Ktm
+29 June 2026, 9:46 pm
+"""
+    assert parse_payment_amount_from_text(text) == 180
+
+
 def test_parse_keeps_four_digit_payment():
     text = """
 2500.00

@@ -26,12 +26,12 @@ PAID_TO_PATTERN = re.compile(r"^paid\s+to\b", re.IGNORECASE)
 
 
 def _correct_rupee_misread_amount(compact: str, value: float) -> float:
-    match = re.match(r"^2([789]\d{2}\.\d{2})$", compact)
+    match = re.match(r"^2(1\d{2}|7[89]\d|8\d{2}|9\d{2})\.(\d{2})$", compact)
     if not match:
         return value
 
     try:
-        return float(match.group(1))
+        return float(f"{match.group(1)}.{match.group(2)}")
     except ValueError:
         return value
 
