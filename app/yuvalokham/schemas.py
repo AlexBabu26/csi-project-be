@@ -2,7 +2,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.common.phone_utils import normalize_optional_phone, validate_and_normalize_phone
 
 from app.yuvalokham.models import (
     YuvalokhamUserRole,
@@ -42,6 +44,11 @@ class YMUserRegister(BaseModel):
     unit_id: Optional[int] = None
     parish_name: Optional[str] = Field(None, max_length=255)
     is_csi_member: bool = False
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
 
 
 class YMUserLogin(BaseModel):
@@ -99,6 +106,11 @@ class YMUserUpdate(BaseModel):
     parish_name: Optional[str] = Field(None, max_length=255)
     is_csi_member: Optional[bool] = None
 
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_optional_phone(v)
+
 
 class YMAdminUserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=150)
@@ -111,6 +123,11 @@ class YMAdminUserUpdate(BaseModel):
     is_csi_member: Optional[bool] = None
     is_active: Optional[bool] = None
 
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_optional_phone(v)
+
 
 class YMAdminResetPassword(BaseModel):
     new_password: str = Field(min_length=8)
@@ -121,6 +138,11 @@ class YMAdminCreate(BaseModel):
     email: EmailStr
     phone: str = Field(min_length=5, max_length=20)
     password: str = Field(min_length=8)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
 
 
 # --- Subscription Plan ---

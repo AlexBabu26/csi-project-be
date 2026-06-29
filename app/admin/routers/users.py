@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash
 from app.common.exporter import create_password_reset_credentials_excel
+from app.common.phone_utils import normalize_optional_phone, phone_lookup_variants, validate_and_normalize_phone
 from app.auth.models import CustomUser, UserType, ClergyDistrict, UnitName
 
 
@@ -175,6 +176,11 @@ class DistrictOfficialCreateRequest(BaseModel):
     phone_number: str = Field(..., min_length=10, max_length=20, description="Phone number (also used as default password)")
     password: Optional[str] = Field(None, min_length=6, max_length=128, description="Custom password (optional, defaults to phone number)")
 
+    @field_validator("phone_number")
+    @classmethod
+    def normalize_phone_number(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
+
 
 class DistrictOfficialResponse(BaseModel):
     """Response schema for district official creation."""
@@ -193,6 +199,11 @@ class BloodBankUserCreateRequest(BaseModel):
     phone_number: Optional[str] = Field(None, min_length=10, max_length=20)
     password: str = Field(..., min_length=6, max_length=128)
 
+    @field_validator("phone_number")
+    @classmethod
+    def normalize_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_optional_phone(v)
+
 
 class BloodBankUserUpdateRequest(BaseModel):
     """Schema for updating a blood bank user."""
@@ -201,6 +212,11 @@ class BloodBankUserUpdateRequest(BaseModel):
     phone_number: Optional[str] = Field(None, min_length=10, max_length=20)
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, min_length=6, max_length=128)
+
+    @field_validator("phone_number")
+    @classmethod
+    def normalize_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_optional_phone(v)
 
 
 class BloodBankUserResponse(BaseModel):
@@ -588,7 +604,8 @@ async def create_district_official(
         )
     
     # Check if phone number is already taken
-    stmt = select(CustomUser).where(CustomUser.phone_number == data.phone_number)
+    phone_variants = phone_lookup_variants(data.phone_number)
+    stmt = select(CustomUser).where(CustomUser.phone_number.in_(phone_variants))
     result = await db.execute(stmt)
     existing_phone = result.scalar_one_or_none()
     
@@ -711,7 +728,8 @@ async def create_blood_bank_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
 
     if data.phone_number:
-        stmt = select(CustomUser).where(CustomUser.phone_number == data.phone_number)
+        phone_variants = phone_lookup_variants(data.phone_number)
+        stmt = select(CustomUser).where(CustomUser.phone_number.in_(phone_variants))
         result = await db.execute(stmt)
         if result.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone number already in use")
@@ -765,9 +783,11 @@ async def update_blood_bank_user(
         user.first_name = data.first_name
 
     if data.phone_number is not None:
-        if data.phone_number != user.phone_number:
+        user_variants = set(phone_lookup_variants(user.phone_number or ""))
+        new_variants = set(phone_lookup_variants(data.phone_number))
+        if user_variants.isdisjoint(new_variants):
             stmt = select(CustomUser).where(
-                CustomUser.phone_number == data.phone_number,
+                CustomUser.phone_number.in_(list(new_variants)),
                 CustomUser.id != user_id,
             )
             result = await db.execute(stmt)

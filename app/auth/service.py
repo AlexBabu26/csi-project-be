@@ -28,6 +28,7 @@ from app.common.security import (
     get_password_hash,
     verify_password,
 )
+from app.common.phone_utils import phone_lookup_variants
 from app.common.config import get_settings
 
 settings = get_settings()
@@ -60,11 +61,14 @@ class AuthService:
             HTTPException: If credentials are invalid
         """
         # 1. Authenticate user
+        login_identifiers = [data.username]
+        login_identifiers.extend(phone_lookup_variants(data.username))
+
         query = select(CustomUser).where(
             or_(
                 CustomUser.username == data.username,
                 CustomUser.email == data.username,
-                CustomUser.phone_number == data.username,
+                CustomUser.phone_number.in_(login_identifiers),
             )
         )
         user = self.session.execute(query).scalar_one_or_none()
@@ -294,8 +298,9 @@ class AuthService:
                 detail="Unit has been registered already",
             )
 
+        phone_variants = phone_lookup_variants(payload.phone_number)
         existing_phone = self.session.execute(
-            select(CustomUser).where(CustomUser.phone_number == payload.phone_number)
+            select(CustomUser).where(CustomUser.phone_number.in_(phone_variants))
         ).scalar_one_or_none()
         if existing_phone:
             raise HTTPException(

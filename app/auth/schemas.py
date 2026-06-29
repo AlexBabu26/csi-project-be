@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 
 from app.auth.models import UserType
+from app.common.phone_utils import validate_and_normalize_phone
 from app.common.schemas import Timestamped
 
 
@@ -81,6 +82,11 @@ class UnitRegistrationRequest(BaseModel):
     unit_name_id: int
     clergy_district_id: int
     password: str = Field(min_length=8)
+
+    @field_validator("phone_number")
+    @classmethod
+    def normalize_phone_number(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
 
 
 class UsernamePreviewResponse(BaseModel):

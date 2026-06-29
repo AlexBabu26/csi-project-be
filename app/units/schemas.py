@@ -7,6 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.auth.models import ResidenceLocation
+from app.common.phone_utils import normalize_optional_phone, validate_and_normalize_phone
 from app.units.gender_utils import validate_member_gender
 
 
@@ -276,6 +277,21 @@ class UnitMemberChangeRequestResponse(BaseModel):
 
 
 # Unit Officials Change Request Schemas
+OFFICIAL_PHONE_FIELDS = (
+    "president_phone",
+    "vice_president_phone",
+    "secretary_phone",
+    "joint_secretary_phone",
+    "treasurer_phone",
+)
+
+
+def _normalize_official_phone(value: Optional[str]) -> Optional[str]:
+    if value is None or not str(value).strip():
+        return value
+    return validate_and_normalize_phone(str(value))
+
+
 class UnitOfficialsChangeRequestBase(BaseModel):
     """Base schema for unit officials change requests."""
     
@@ -306,6 +322,11 @@ class UnitOfficialsChangeRequestCreate(UnitOfficialsChangeRequestBase):
         if not any(v.lower().endswith(f".{ext.value}") for ext in FileExtension):
             raise ValueError(f"File must have one of these extensions: {', '.join(e.value for e in FileExtension)}")
         return v
+
+    @field_validator(*OFFICIAL_PHONE_FIELDS)
+    @classmethod
+    def normalize_official_phones(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_official_phone(v)
 
 
 class UnitOfficialsChangeRequestResponse(BaseModel):
@@ -459,6 +480,7 @@ class UnitMemberAddRequestBase(BaseModel):
             self.residence_state_id,
             self.residence_city_id,
         )
+        self.number = validate_and_normalize_phone(self.number)
         return self
 
 
@@ -511,6 +533,11 @@ class UnitDetailsCreate(BaseModel):
     president_designation: str = Field(..., min_length=1, max_length=50)
     president_name: str = Field(..., min_length=1, max_length=255)
     president_phone: str = Field(..., min_length=1, max_length=30)
+
+    @field_validator("president_phone")
+    @classmethod
+    def normalize_president_phone(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
 
 
 class UnitDetailsResponse(BaseModel):
@@ -577,6 +604,8 @@ class UnitMemberCreate(UnitMemberBase):
             raise ValueError(
                 f"Invalid blood group. Must be one of: {', '.join(sorted(VALID_BLOOD_GROUPS))}"
             )
+        if self.number:
+            self.number = validate_and_normalize_phone(self.number)
         return self
 
 
@@ -606,6 +635,8 @@ class UnitMemberUpdate(BaseModel):
                 self.residence_state_id,
                 self.residence_city_id,
             )
+        if self.number:
+            self.number = validate_and_normalize_phone(self.number)
         return self
 
 
@@ -627,6 +658,11 @@ class UnitOfficialsUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     phone: str = Field(..., min_length=1, max_length=30)
     designation: Optional[str] = Field(None, max_length=50, description="Only for President position")
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: str) -> str:
+        return validate_and_normalize_phone(v)
 
 
 class UnitOfficialsResponse(BaseModel):
