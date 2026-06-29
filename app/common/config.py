@@ -7,8 +7,7 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        # Load standard .env first, then repo "env" file (local override).
-        env_file=(".env", "env"),
+        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -28,7 +27,7 @@ class Settings(BaseSettings):
     #   postgresql+psycopg://user:pass@ep-xxx-pooler.region.aws.neon.tech/dbname?sslmode=require
     #
     # Note the "-pooler" suffix in the hostname for the pooled connection.
-    # Set via DATABASE_URL in .env or env (never commit real credentials here).
+    # Set via DATABASE_URL in .env (never commit real credentials here).
     database_url: str = ""
     secret_key: str = "change-this-secret"
     access_token_expire_minutes: int = 15  # Short-lived access tokens
