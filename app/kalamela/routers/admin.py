@@ -2112,47 +2112,61 @@ async def get_unit_wise_results(
 async def get_district_wise_results(
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
+    refresh: bool = Query(False, description="Force refresh cache"),
 ):
-    """Get top 3 results per district with aggregated points."""
-    stmt = select(ClergyDistrict).order_by(ClergyDistrict.name)
-    result = await db.execute(stmt)
-    districts = list(result.scalars().all())
-    
-    results_dict = {}
-    
-    for district in districts:
-        # Get top 3 scores for this district
-        stmt = select(IndividualEventScoreCard).join(
-            UnitMembers, IndividualEventScoreCard.participant_id == UnitMembers.id
-        ).join(
-            CustomUser, UnitMembers.registered_user_id == CustomUser.id
-        ).join(
-            UnitName, CustomUser.unit_name_id == UnitName.id
-        ).where(
-            UnitName.clergy_district_id == district.id
-        ).order_by(IndividualEventScoreCard.total_points.desc())
-        result = await db.execute(stmt)
-        scores = list(result.scalars().all())
-        
-        # Calculate total points
-        total_points = sum(s.total_points for s in scores)
-        
-        if scores:
-            results_dict[district.name] = [{
-                "district_results": [
-                    {
-                        "id": s.id,
-                        "participant_id": s.participant_id,
-                        "awarded_mark": s.awarded_mark,
-                        "grade": s.grade,
-                        "total_points": s.total_points,
-                    }
-                    for s in scores
-                ],
-                "total_points": total_points,
-            }]
-    
-    return {"results_dict": results_dict}
+    """Get results per district with aggregated points — single query."""
+    from app.common.cache import get_cache, set_cache
+    cache_key = "district_wise_results"
+    if not refresh:
+        cached = get_cache(cache_key)
+        if cached is not None:
+            return cached
+
+    stmt = (
+        select(
+            ClergyDistrict.name.label("district_name"),
+            IndividualEventScoreCard.id.label("score_id"),
+            IndividualEventScoreCard.participant_id,
+            IndividualEventScoreCard.awarded_mark,
+            IndividualEventScoreCard.grade,
+            IndividualEventScoreCard.total_points,
+        )
+        .select_from(IndividualEventScoreCard)
+        .join(UnitMembers, IndividualEventScoreCard.participant_id == UnitMembers.id)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .join(ClergyDistrict, UnitName.clergy_district_id == ClergyDistrict.id)
+        .order_by(ClergyDistrict.name, IndividualEventScoreCard.total_points.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    results_dict: dict = {}
+    district_scores: dict = {}
+    district_totals: dict[str, int] = {}
+
+    for row in rows:
+        d = row.district_name
+        if d not in district_scores:
+            district_scores[d] = []
+            district_totals[d] = 0
+        district_scores[d].append({
+            "id": row.score_id,
+            "participant_id": row.participant_id,
+            "awarded_mark": row.awarded_mark,
+            "grade": row.grade,
+            "total_points": row.total_points,
+        })
+        district_totals[d] = (district_totals[d] or 0) + (row.total_points or 0)
+
+    for d, scores in district_scores.items():
+        results_dict[d] = [{
+            "district_results": scores,
+            "total_points": district_totals[d],
+        }]
+
+    response = {"results_dict": results_dict}
+    set_cache(cache_key, response, ttl_seconds=300)
+    return response
 
 
 # Excel Exports

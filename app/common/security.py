@@ -205,25 +205,21 @@ async def get_current_user(
     Get current user from access token (async version).
 
     Validates JWT signature and expiration, then fetches user from database.
-    Access tokens are stateless (no DB check for token itself).
-
-    Args:
-        token: JWT token from Authorization header
-        db: Async database session
-
-    Returns:
-        CustomUser object
-
-    Raises:
-        HTTPException: If user not found or inactive
+    User records are cached for 30 s to avoid a DB round-trip on every request.
     """
     from app.auth.models import CustomUser
+    from app.common.cache import get_cache, set_cache
 
     payload = decode_token(token)
     user_id = int(payload.sub)
 
-    # Fetch user from DB
-    user = await db.get(CustomUser, user_id)
+    cache_key = f"_user:{user_id}"
+    user = get_cache(cache_key)
+    if user is None:
+        user = await db.get(CustomUser, user_id)
+        if user and user.is_active:
+            set_cache(cache_key, user, ttl_seconds=30)
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -240,31 +236,30 @@ def get_current_user_sync(
 ):
     """
     Get current user from access token (sync version).
-    
-    For non-async endpoints.
-    
-    Args:
-        token: JWT token from Authorization header
-        db: Database session
-    
-    Returns:
-        CustomUser object
-    
-    Raises:
-        HTTPException: If user not found or inactive
+
+    User records are cached for 30 s to reduce DB round-trips on sync endpoints.
     """
     from app.auth.models import CustomUser
-    
+    from app.common.cache import get_cache, set_cache
+
     payload = decode_token(token)
     user_id = int(payload.sub)
-    
-    user = db.get(CustomUser, user_id)
+
+    cache_key = f"_user:{user_id}"
+    user = get_cache(cache_key)
+    if user is None:
+        user = db.get(CustomUser, user_id)
+        if user and user.is_active:
+            set_cache(cache_key, user, ttl_seconds=30)
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+    return user
     
     return user
 

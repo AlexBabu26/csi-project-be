@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.common.config import get_settings
 from app.common import file_router
@@ -18,6 +19,9 @@ settings = get_settings()
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
+
+# Compress responses >= 1 KB (covers JSON list payloads)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,

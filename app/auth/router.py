@@ -9,6 +9,7 @@ from app.common.schemas import Message
 from app.common.security import get_current_user_sync
 from app.auth.service import AuthService
 from app.auth.models import CustomUser
+from app.common.cache import get_cache, set_cache, TTL_MASTER_DATA
 
 router = APIRouter()
 
@@ -47,12 +48,14 @@ def logout(
 ):
     """
     Logout from all sessions (revoke all refresh tokens).
-    
+
     Access tokens will expire naturally within 15 minutes.
     Requires valid access token.
     """
+    from app.common.cache import clear_cache
     service = AuthService(db)
     service.logout_all_sessions(current_user.id)
+    clear_cache(f"_user:{current_user.id}")
     return Message(message="Logged out from all devices")
 
 
@@ -70,8 +73,14 @@ def register_unit(payload: auth_schema.UnitRegistrationRequest, db: Session = De
 @router.get("/districts", response_model=list[auth_schema.ClergyDistrictItem])
 def list_districts(db: Session = Depends(get_db)):
     """Get clergy districts with at least one unregistered unit."""
+    cache_key = "auth:districts"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
     service = AuthService(db)
-    return service.get_districts()
+    result = service.get_districts()
+    set_cache(cache_key, result, TTL_MASTER_DATA)
+    return result
 
 
 @router.get("/registration-username-preview", response_model=auth_schema.UsernamePreviewResponse)
@@ -88,11 +97,17 @@ def preview_registration_username(
 def list_unit_names(district_id: int | None = None, db: Session = Depends(get_db)):
     """
     Get unit names available for registration.
-    
+
     Optionally filter by district ID. Excludes already registered units.
     """
+    cache_key = f"auth:unit_names:{district_id or 'all'}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
     service = AuthService(db)
-    return service.get_unit_names(district_id)
+    result = service.get_unit_names(district_id)
+    set_cache(cache_key, result, TTL_MASTER_DATA)
+    return result
 
 
 @router.get("/me", response_model=auth_schema.UserRead)

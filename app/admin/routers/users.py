@@ -242,88 +242,114 @@ async def get_admin_user(
 
 # ============ USER LISTING ENDPOINTS ============
 
-@router.get("", response_model=List[UserListItem])
+class UserListResponse(BaseModel):
+    """Paginated user list response."""
+    data: List[UserListItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+@router.get("", response_model=UserListResponse)
 async def list_users(
     user_type: Optional[str] = Query(None, description="Filter by user type: UNIT, DISTRICT_OFFICIAL, or all"),
     district_id: Optional[int] = Query(None, description="Filter by district ID"),
     search: Optional[str] = Query(None, description="Search by username, email, or phone"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
-    List users with optional filters.
-    
+    List users with optional filters and pagination.
+
     User types:
     - UNIT (2): Unit officials login users
     - DISTRICT_OFFICIAL (3): Conference/Kalamela officials
     - BLOOD_BANK (4): Dedicated blood bank search users
     """
-    stmt = select(CustomUser).options(
-        selectinload(CustomUser.unit_name).selectinload(UnitName.district),
-        selectinload(CustomUser.clergy_district)
-    )
-    
     non_admin_types = [UserType.UNIT, UserType.DISTRICT_OFFICIAL, UserType.BLOOD_BANK]
 
-    # Filter by user type (exclude ADMIN users from the list)
-    if user_type:
-        type_upper = user_type.upper()
-        if type_upper == "UNIT":
-            stmt = stmt.where(CustomUser.user_type == UserType.UNIT)
-        elif type_upper == "DISTRICT_OFFICIAL":
-            stmt = stmt.where(CustomUser.user_type == UserType.DISTRICT_OFFICIAL)
-        elif type_upper == "BLOOD_BANK":
-            stmt = stmt.where(CustomUser.user_type == UserType.BLOOD_BANK)
+    def _apply_filters(s, *, join_unit_name: bool = False):
+        if user_type:
+            type_upper = user_type.upper()
+            if type_upper == "UNIT":
+                s = s.where(CustomUser.user_type == UserType.UNIT)
+            elif type_upper == "DISTRICT_OFFICIAL":
+                s = s.where(CustomUser.user_type == UserType.DISTRICT_OFFICIAL)
+            elif type_upper == "BLOOD_BANK":
+                s = s.where(CustomUser.user_type == UserType.BLOOD_BANK)
+            else:
+                s = s.where(CustomUser.user_type.in_(non_admin_types))
         else:
-            stmt = stmt.where(CustomUser.user_type.in_(non_admin_types))
-    else:
-        stmt = stmt.where(CustomUser.user_type.in_(non_admin_types))
-    
-    # Filter by district
-    if district_id:
-        stmt = stmt.outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id).where(
-            or_(
-                CustomUser.clergy_district_id == district_id,
-                UnitName.clergy_district_id == district_id
+            s = s.where(CustomUser.user_type.in_(non_admin_types))
+
+        if district_id:
+            if not join_unit_name:
+                s = s.outerjoin(UnitName, CustomUser.unit_name_id == UnitName.id)
+            s = s.where(
+                or_(
+                    CustomUser.clergy_district_id == district_id,
+                    UnitName.clergy_district_id == district_id,
+                )
             )
-        )
-    
-    # Filter by active status
-    if is_active is not None:
-        stmt = stmt.where(CustomUser.is_active == is_active)
-    
-    # Search filter
-    if search:
-        search_pattern = f"%{search}%"
-        stmt = stmt.where(
-            or_(
-                CustomUser.username.ilike(search_pattern),
-                CustomUser.email.ilike(search_pattern),
-                CustomUser.phone_number.ilike(search_pattern),
+        if is_active is not None:
+            s = s.where(CustomUser.is_active == is_active)
+        if search:
+            pattern = f"%{search}%"
+            s = s.where(
+                or_(
+                    CustomUser.username.ilike(pattern),
+                    CustomUser.email.ilike(pattern),
+                    CustomUser.phone_number.ilike(pattern),
+                )
             )
+        return s
+
+    count_stmt = _apply_filters(select(func.count()).select_from(CustomUser))
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    offset = (page - 1) * page_size
+    stmt = _apply_filters(
+        select(CustomUser).options(
+            selectinload(CustomUser.unit_name).selectinload(UnitName.district),
+            selectinload(CustomUser.clergy_district),
         )
-    
+    ).order_by(CustomUser.username).offset(offset).limit(page_size)
+
     result = await db.execute(stmt)
     users = list(result.scalars().unique().all())
-    
-    return [
-        UserListItem(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            phone_number=user.phone_number,
-            first_name=user.first_name,
-            user_type=user.user_type.name,
-            is_active=user.is_active,
-            unit_name=user.unit_name.name if user.unit_name else None,
-            district_name=(
-                user.clergy_district.name if user.clergy_district 
-                else (user.unit_name.district.name if user.unit_name and user.unit_name.district else None)
-            ),
-        )
-        for user in users
-    ]
+
+    return UserListResponse(
+        data=[
+            UserListItem(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                phone_number=user.phone_number,
+                first_name=user.first_name,
+                user_type=user.user_type.name,
+                is_active=user.is_active,
+                unit_name=user.unit_name.name if user.unit_name else None,
+                district_name=(
+                    user.clergy_district.name
+                    if user.clergy_district
+                    else (
+                        user.unit_name.district.name
+                        if user.unit_name and user.unit_name.district
+                        else None
+                    )
+                ),
+            )
+            for user in users
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=(total + page_size - 1) // page_size,
+    )
 
 
 @router.get("/summary", response_model=dict)

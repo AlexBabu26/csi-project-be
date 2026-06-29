@@ -72,16 +72,24 @@ async def view_conference(
     delegated_member_ids = [row[0] for row in result.all()]
     
     # Get available unit members from the district (excluding official's phone)
-    stmt = select(UnitMembers).join(
-        CustomUser, UnitMembers.registered_user_id == CustomUser.id
-    ).where(
-        and_(
-            CustomUser.unit_name.has(clergy_district_id=current_user.clergy_district_id),
-            UnitMembers.number != current_user.phone_number
+    stmt = (
+        select(
+            UnitMembers.id,
+            UnitMembers.name,
+            UnitMembers.number,
+            UnitMembers.gender,
         )
-    ).order_by(UnitMembers.name)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .where(
+            and_(
+                CustomUser.unit_name.has(clergy_district_id=current_user.clergy_district_id),
+                UnitMembers.number != current_user.phone_number,
+            )
+        )
+        .order_by(UnitMembers.name)
+    )
     result = await db.execute(stmt)
-    unit_members = list(result.scalars().all())
+    unit_members = result.all()
     
     # Calculate remaining count
     rem_count = max_count - len(delegated_member_ids)
@@ -142,24 +150,25 @@ async def view_delegates(
             detail="No conference assigned"
         )
     
-    # Get delegated member IDs
-    stmt = select(ConferenceDelegate.members_id).where(
-        and_(
-            ConferenceDelegate.conference_id == current_user.conference_id,
-            ConferenceDelegate.officials_id == current_user.id,
-            ConferenceDelegate.members_id.isnot(None)
+    # Single JOIN to get delegate members directly instead of two round-trips
+    stmt = (
+        select(
+            UnitMembers.id,
+            UnitMembers.name,
+            UnitMembers.number,
+            UnitMembers.gender,
+        )
+        .join(ConferenceDelegate, ConferenceDelegate.members_id == UnitMembers.id)
+        .where(
+            and_(
+                ConferenceDelegate.conference_id == current_user.conference_id,
+                ConferenceDelegate.officials_id == current_user.id,
+                ConferenceDelegate.members_id.isnot(None),
+            )
         )
     )
     result = await db.execute(stmt)
-    member_ids = [row[0] for row in result.all()]
-    
-    # Get delegate members
-    if member_ids:
-        stmt = select(UnitMembers).where(UnitMembers.id.in_(member_ids))
-        result = await db.execute(stmt)
-        delegate_members = list(result.scalars().all())
-    else:
-        delegate_members = []
+    delegate_members = result.all()
     
     # Get delegate officials (all officials from this district)
     stmt = select(CustomUser).where(

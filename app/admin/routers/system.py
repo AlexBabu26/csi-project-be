@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_password_hash, get_admin_or_blood_bank_user
-from app.common.cache import get_cache, set_cache
+from app.common.cache import get_cache, set_cache, clear_cache, TTL_DISTRICT_DATA, TTL_MASTER_DATA
 from sqlalchemy import func, and_, case, distinct, or_
 from sqlalchemy.orm import selectinload
 from app.auth.models import (
@@ -150,7 +150,7 @@ async def get_district_wise_data(
     result_data = list(district_data.values())
     
     # Cache for 5 minutes (300 seconds)
-    set_cache(cache_key, result_data, ttl_seconds=300)
+    set_cache(cache_key, result_data, ttl_seconds=TTL_DISTRICT_DATA)
     
     return result_data
 
@@ -162,17 +162,16 @@ async def list_districts(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all clergy districts."""
-    stmt = select(ClergyDistrict)
-    result = await db.execute(stmt)
-    districts = list(result.scalars().all())
+    cache_key = "system:districts"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
 
-    return [
-        {
-            "id": district.id,
-            "name": district.name,
-        }
-        for district in districts
-    ]
+    stmt = select(ClergyDistrict).order_by(ClergyDistrict.name)
+    result = await db.execute(stmt)
+    data = [{"id": d.id, "name": d.name} for d in result.scalars().all()]
+    set_cache(cache_key, data, TTL_MASTER_DATA)
+    return data
 
 
 @router.post("/districts", response_model=dict)
@@ -197,7 +196,8 @@ async def create_district(
     db.add(district)
     await db.commit()
     await db.refresh(district)
-    
+    clear_cache("system:districts")
+
     return {
         "message": "District created successfully",
         "id": district.id,
@@ -213,28 +213,36 @@ async def list_unit_names(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List all unit names, optionally filtered by district."""
-    stmt = select(UnitName)
-    
+    cache_key = f"system:unit_names:{district_id or 'all'}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    stmt = (
+        select(
+            UnitName.id,
+            UnitName.name,
+            UnitName.clergy_district_id,
+            ClergyDistrict.name.label("district_name"),
+        )
+        .join(ClergyDistrict, ClergyDistrict.id == UnitName.clergy_district_id)
+        .order_by(ClergyDistrict.name, UnitName.name)
+    )
     if district_id:
         stmt = stmt.where(UnitName.clergy_district_id == district_id)
-    
+
     result = await db.execute(stmt)
-    unit_names = list(result.scalars().all())
-    
-    # Get district names
-    stmt = select(ClergyDistrict)
-    result = await db.execute(stmt)
-    districts = {d.id: d.name for d in result.scalars().all()}
-    
-    return [
+    data = [
         {
-            "id": unit.id,
-            "name": unit.name,
-            "clergy_district_id": unit.clergy_district_id,
-            "district_name": districts.get(unit.clergy_district_id, "Unknown"),
+            "id": row.id,
+            "name": row.name,
+            "clergy_district_id": row.clergy_district_id,
+            "district_name": row.district_name or "Unknown",
         }
-        for unit in unit_names
+        for row in result.all()
     ]
+    set_cache(cache_key, data, TTL_MASTER_DATA)
+    return data
 
 
 @router.post("/unit-names", response_model=dict)
@@ -276,7 +284,8 @@ async def create_unit_name(
     db.add(unit_name)
     await db.commit()
     await db.refresh(unit_name)
-    
+    clear_cache("system:unit_names")
+
     return {
         "message": "Unit name created successfully",
         "id": unit_name.id,

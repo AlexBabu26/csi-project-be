@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from sqlalchemy import select, func, and_, or_, DateTime
+from sqlalchemy import select, func, and_, or_, DateTime, extract, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.config import get_settings
@@ -686,53 +686,76 @@ class YuvalokhamService:
 
     @staticmethod
     async def get_analytics_trends(db: AsyncSession, months: int = 12) -> List[ym_schema.YMTrendPoint]:
-        cutoff = today_ist() - relativedelta(months=months)
-        trends = []
-
+        # Build the ordered list of (month_label, m_start, m_end) up front
+        month_ranges = []
         for i in range(months):
-            m_start = today_ist() - relativedelta(months=months - 1 - i)
-            m_start = m_start.replace(day=1)
-            if i < months - 1:
-                m_end = (m_start + relativedelta(months=1)) - timedelta(days=1)
-            else:
-                m_end = today_ist()
+            m_start = (today_ist() - relativedelta(months=months - 1 - i)).replace(day=1)
+            m_end = today_ist() if i == months - 1 else (m_start + relativedelta(months=1)) - timedelta(days=1)
+            month_ranges.append((m_start.strftime("%Y-%m"), m_start, m_end))
 
-            new_users = (await db.execute(
-                select(func.count()).where(
-                    YMUser.role == YuvalokhamUserRole.USER,
-                    func.date(YMUser.created_at) >= m_start,
-                    func.date(YMUser.created_at) <= m_end,
-                )
-            )).scalar() or 0
+        overall_start = month_ranges[0][1]
+        overall_end = month_ranges[-1][2]
 
-            new_subs = (await db.execute(
-                select(func.count()).where(
-                    YMSubscription.created_at >= datetime.combine(m_start, datetime.min.time()),
-                    YMSubscription.created_at <= datetime.combine(m_end, datetime.max.time()),
-                )
-            )).scalar() or 0
+        # Single GROUP BY query for new users
+        month_expr = func.to_char(YMUser.created_at, "YYYY-MM")
+        user_result = await db.execute(
+            select(month_expr.label("m"), func.count().label("cnt"))
+            .where(
+                YMUser.role == YuvalokhamUserRole.USER,
+                func.date(YMUser.created_at) >= overall_start,
+                func.date(YMUser.created_at) <= overall_end,
+            )
+            .group_by(month_expr)
+        )
+        user_counts: dict[str, int] = {r.m: r.cnt for r in user_result.all()}
 
-            revenue = (await db.execute(
-                select(func.coalesce(func.sum(YMPayment.amount), 0)).where(
-                    YMPayment.status == YMPaymentStatus.APPROVED,
-                    YMPayment.reviewed_at >= datetime.combine(m_start, datetime.min.time()),
-                    YMPayment.reviewed_at <= datetime.combine(m_end, datetime.max.time()),
-                )
-            )).scalar() or Decimal("0")
+        # Single GROUP BY query for new subscriptions
+        sub_month_expr = func.to_char(YMSubscription.created_at, "YYYY-MM")
+        sub_result = await db.execute(
+            select(sub_month_expr.label("m"), func.count().label("cnt"))
+            .where(
+                YMSubscription.created_at >= datetime.combine(overall_start, datetime.min.time()),
+                YMSubscription.created_at <= datetime.combine(overall_end, datetime.max.time()),
+            )
+            .group_by(sub_month_expr)
+        )
+        sub_counts: dict[str, int] = {r.m: r.cnt for r in sub_result.all()}
 
-            complaints = (await db.execute(
-                select(func.count()).where(
-                    func.date(YMComplaint.created_at) >= m_start,
-                    func.date(YMComplaint.created_at) <= m_end,
-                )
-            )).scalar() or 0
+        # Single GROUP BY query for revenue
+        rev_month_expr = func.to_char(YMPayment.reviewed_at, "YYYY-MM")
+        rev_result = await db.execute(
+            select(rev_month_expr.label("m"), func.coalesce(func.sum(YMPayment.amount), 0).label("total"))
+            .where(
+                YMPayment.status == YMPaymentStatus.APPROVED,
+                YMPayment.reviewed_at >= datetime.combine(overall_start, datetime.min.time()),
+                YMPayment.reviewed_at <= datetime.combine(overall_end, datetime.max.time()),
+            )
+            .group_by(rev_month_expr)
+        )
+        revenue_map: dict[str, Decimal] = {r.m: Decimal(str(r.total)) for r in rev_result.all()}
 
-            trends.append(ym_schema.YMTrendPoint(
-                month=m_start.strftime("%Y-%m"), new_users=new_users,
-                new_subscriptions=new_subs, revenue=revenue, complaints=complaints,
-            ))
+        # Single GROUP BY query for complaints
+        comp_month_expr = func.to_char(YMComplaint.created_at, "YYYY-MM")
+        comp_result = await db.execute(
+            select(comp_month_expr.label("m"), func.count().label("cnt"))
+            .where(
+                func.date(YMComplaint.created_at) >= overall_start,
+                func.date(YMComplaint.created_at) <= overall_end,
+            )
+            .group_by(comp_month_expr)
+        )
+        complaint_counts: dict[str, int] = {r.m: r.cnt for r in comp_result.all()}
 
-        return trends
+        return [
+            ym_schema.YMTrendPoint(
+                month=label,
+                new_users=user_counts.get(label, 0),
+                new_subscriptions=sub_counts.get(label, 0),
+                revenue=revenue_map.get(label, Decimal("0")),
+                complaints=complaint_counts.get(label, 0),
+            )
+            for label, _, _ in month_ranges
+        ]
 
     @staticmethod
     async def get_analytics_breakdowns(db: AsyncSession) -> ym_schema.YMAnalyticsBreakdowns:

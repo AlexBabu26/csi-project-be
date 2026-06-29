@@ -12,7 +12,7 @@ from app.common.datetime_utils import format_timestamp_ist, now_ist
 
 from app.common.db import get_async_db
 from app.common.security import get_current_user, get_current_user_sync
-from app.common.cache import get_cache, set_cache, clear_cache
+from app.common.cache import get_cache, set_cache, clear_cache, TTL_DASHBOARD, TTL_UNITS_LIST, TTL_PAYMENTS, TTL_MEMBER_ADD_REQ
 from app.common.storage import save_upload_file
 from app.admin.models import SiteSettings
 from app.admin.routers.site import get_public_file_url, SITE_SETTINGS_CACHE_KEY
@@ -205,19 +205,18 @@ async def admin_home_page(
     )
     pending_approval_units_count = pending_approval_result.scalar() or 0
 
-    pending_requests_count = 0
-    for model in (
-        UnitTransferRequest,
-        UnitMemberChangeRequest,
-        UnitOfficialsChangeRequest,
-        UnitCouncilorChangeRequest,
-        UnitMemberAddRequest,
-        ArchivedMemberConcernRequest,
-    ):
-        req_result = await db.execute(
-            select(func.count(model.id)).where(model.status == RequestStatus.PENDING)
-        )
-        pending_requests_count += req_result.scalar() or 0
+    # Single UNION ALL query instead of 6 round-trips to count pending requests
+    from sqlalchemy import union_all
+    pending_union = union_all(
+        select(func.count(UnitTransferRequest.id)).where(UnitTransferRequest.status == RequestStatus.PENDING),
+        select(func.count(UnitMemberChangeRequest.id)).where(UnitMemberChangeRequest.status == RequestStatus.PENDING),
+        select(func.count(UnitOfficialsChangeRequest.id)).where(UnitOfficialsChangeRequest.status == RequestStatus.PENDING),
+        select(func.count(UnitCouncilorChangeRequest.id)).where(UnitCouncilorChangeRequest.status == RequestStatus.PENDING),
+        select(func.count(UnitMemberAddRequest.id)).where(UnitMemberAddRequest.status == RequestStatus.PENDING),
+        select(func.count(ArchivedMemberConcernRequest.id)).where(ArchivedMemberConcernRequest.status == RequestStatus.PENDING),
+    )
+    pending_rows = (await db.execute(pending_union)).all()
+    pending_requests_count = sum(row[0] for row in pending_rows)
     
     # Single query for all member counts (total, male, female)
     male_gender = or_(UnitMembers.gender == 'M', UnitMembers.gender == 'Male')
@@ -276,7 +275,7 @@ async def admin_home_page(
     }
     
     # Cache for 5 minutes (300 seconds)
-    set_cache(cache_key, result_data, ttl_seconds=300)
+    set_cache(cache_key, result_data, ttl_seconds=TTL_DASHBOARD)
     
     return result_data
 
@@ -415,7 +414,7 @@ async def list_all_units(
         for unit_data in units_data
     ]
 
-    set_cache(cache_key, result, ttl_seconds=300)
+    set_cache(cache_key, result, ttl_seconds=TTL_UNITS_LIST)
     return result
 
 
@@ -451,11 +450,14 @@ async def list_not_onboarded_units(
 # Transfer Request Endpoints
 @router.get("/transfer-requests", response_model=List[UnitTransferRequestResponse])
 async def list_transfer_requests(
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all transfer requests."""
-    return await units_service.get_transfer_requests(db)
+    """List transfer requests. Defaults to PENDING only."""
+    from app.units.models import RequestStatus as RS
+    status_filter = RS(status.upper()) if status else RS.PENDING
+    return await units_service.get_transfer_requests(db, status_filter=status_filter)
 
 
 @router.put("/transfer-requests/{request_id}/approve", response_model=UnitTransferRequestResponse)
@@ -494,11 +496,14 @@ async def reject_transfer_request(
 # Member Change Request Endpoints
 @router.get("/member-change-requests", response_model=List[UnitMemberChangeRequestResponse])
 async def list_member_change_requests(
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all member change requests."""
-    return await units_service.get_member_change_requests(db)
+    """List member change requests. Defaults to PENDING only."""
+    from app.units.models import RequestStatus as RS
+    status_filter = RS(status.upper()) if status else RS.PENDING
+    return await units_service.get_member_change_requests(db, status_filter=status_filter)
 
 
 @router.put("/member-change-requests/{request_id}/approve", response_model=UnitMemberChangeRequestResponse)
@@ -537,11 +542,14 @@ async def reject_member_change_request(
 # Officials Change Request Endpoints
 @router.get("/officials-change-requests", response_model=List[UnitOfficialsChangeRequestResponse])
 async def list_officials_change_requests(
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all officials change requests."""
-    return await units_service.get_officials_change_requests(db)
+    """List officials change requests. Defaults to PENDING only."""
+    from app.units.models import RequestStatus as RS
+    status_filter = RS(status.upper()) if status else RS.PENDING
+    return await units_service.get_officials_change_requests(db, status_filter=status_filter)
 
 
 @router.put("/officials-change-requests/{request_id}/approve", response_model=UnitOfficialsChangeRequestResponse)
@@ -580,11 +588,14 @@ async def reject_officials_change_request(
 # Councilor Change Request Endpoints
 @router.get("/councilor-change-requests", response_model=List[UnitCouncilorChangeRequestResponse])
 async def list_councilor_change_requests(
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all councilor change requests."""
-    return await units_service.get_councilor_change_requests(db)
+    """List councilor change requests. Defaults to PENDING only."""
+    from app.units.models import RequestStatus as RS
+    status_filter = RS(status.upper()) if status else RS.PENDING
+    return await units_service.get_councilor_change_requests(db, status_filter=status_filter)
 
 
 @router.put("/councilor-change-requests/{request_id}/approve", response_model=UnitCouncilorChangeRequestResponse)
@@ -634,7 +645,7 @@ async def list_member_add_requests(
         if cached is not None:
             return cached
     payload = await units_service.get_member_add_requests(db)
-    set_cache(cache_key, payload, ttl_seconds=120)
+    set_cache(cache_key, payload, ttl_seconds=TTL_MEMBER_ADD_REQ)
     return payload
 
 
@@ -668,11 +679,14 @@ async def reject_member_add_request(
 # Archived Member Concern Request Endpoints
 @router.get("/archived-member-concern-requests")
 async def list_archived_member_concern_requests(
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List all archived member concern requests."""
-    return await units_service.get_archived_member_concern_requests(db)
+    """List archived member concern requests. Defaults to PENDING only."""
+    from app.units.models import RequestStatus as RS
+    status_filter = RS(status.upper()) if status else RS.PENDING
+    return await units_service.get_archived_member_concern_requests(db, status_filter=status_filter)
 
 
 @router.put("/archived-member-concern-requests/{request_id}/approve")
@@ -1613,7 +1627,7 @@ async def list_registration_payments(
         }
         for p, u, un, cycle in rows
     ]
-    set_cache(cache_key, payload, ttl_seconds=120)
+    set_cache(cache_key, payload, ttl_seconds=TTL_PAYMENTS)
     return payload
 
 

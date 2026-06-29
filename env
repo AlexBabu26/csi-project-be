@@ -7,7 +7,7 @@ B2_REGION=eu-central-003
 
 # Database Configuration (Backend only - do not expose to client)
 # PROD
-DATABASE_URL=postgresql+psycopg://neondb_owner:npg_mcp40TxrFHVC@ep-round-waterfall-a13doc66-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require&channel_binding=require
+#DATABASE_URL=postgresql+psycopg://neondb_owner:npg_mcp40TxrFHVC@ep-round-waterfall-a13doc66-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require&channel_binding=require
 
 #DEV
-#DATABASE_URL=postgresql+psycopg://neondb_owner:npg_mcp40TxrFHVC@ep-snowy-heart-a1z65pya-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require&channel_binding=require
+DATABASE_URL=postgresql+psycopg://neondb_owner:npg_mcp40TxrFHVC@ep-snowy-heart-a1z65pya-pooler.ap-southeast-1.aws.neon.tech/csi_youth_db?sslmode=require&channel_binding=require

@@ -134,39 +134,78 @@ async def get_application_form(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Get application form data with current registration status."""
+    from app.common.cache import get_cache, set_cache
+
+    # These two sub-queries are pure lookups on static data — cache them
+    async def _get_fees_cached() -> tuple:
+        key = "_fees:registration"
+        cached = get_cache(key)
+        if cached is not None:
+            return cached
+        val = await _get_unit_registration_fees(db)
+        set_cache(key, val, ttl_seconds=300)
+        return val
+
+    async def _get_unit_name_cached(unit_name_id: int) -> tuple:
+        key = f"_unit_name:{unit_name_id}"
+        cached = get_cache(key)
+        if cached is not None:
+            return cached
+        result = await db.execute(
+            select(UnitName)
+            .options(selectinload(UnitName.district))
+            .where(UnitName.id == unit_name_id)
+        )
+        obj = result.scalar_one_or_none()
+        val = (obj.name if obj else None, obj.district.name if obj and obj.district else None)
+        set_cache(key, val, ttl_seconds=3600)
+        return val
+
+    async def _get_district_name_cached(district_id: int) -> str | None:
+        key = f"_district:{district_id}"
+        cached = get_cache(key)
+        if cached is not None:
+            return cached
+        result = await db.execute(
+            select(ClergyDistrict).where(ClergyDistrict.id == district_id)
+        )
+        d = result.scalar_one_or_none()
+        val = d.name if d else None
+        set_cache(key, val, ttl_seconds=3600)
+        return val
+
     cycle, registration_enabled, has_any_completed_cycle = await cycle_service.resolve_active_cycle(
         db, current_user.id
     )
-    
-    # Get unit details
     unit_details = await cycle_service.get_unit_details_for_user(db, current_user.id)
-    
-    # Get officials
     unit_officials = await cycle_service.get_unit_officials_for_user(db, current_user.id)
-    
-    # Get members
-    stmt = (
+
+    result = await db.execute(
         select(UnitMembers)
         .options(*_MEMBER_RESIDENCE_OPTIONS)
         .where(UnitMembers.registered_user_id == current_user.id)
         .order_by(UnitMembers.name)
     )
-    result = await db.execute(stmt)
     unit_members = list(result.scalars().all())
-    
-    # Get councilors
-    stmt = select(UnitCouncilor).where(UnitCouncilor.registered_user_id == current_user.id)
-    result = await db.execute(stmt)
+
+    result = await db.execute(
+        select(UnitCouncilor).where(UnitCouncilor.registered_user_id == current_user.id)
+    )
     unit_councilors = list(result.scalars().all())
-    
-    # Calculate counts and amounts
+
+    unit_registration_fee, unit_member_fee = await _get_fees_cached()
+
+    unit_name_str, clergy_district_name = (None, None)
+    if current_user.unit_name_id:
+        unit_name_str, clergy_district_name = await _get_unit_name_cached(current_user.unit_name_id)
+
+    if not clergy_district_name and current_user.clergy_district_id:
+        clergy_district_name = await _get_district_name_cached(current_user.clergy_district_id)
+
     member_count = len(unit_members)
-    unit_registration_fee, unit_member_fee = await _get_unit_registration_fees(db)
     members_amount = member_count * unit_member_fee
     total_amount = members_amount + unit_registration_fee
-    
-    # Calculate councilor fields needed
-    number_of_fields = 0
+
     if 1 <= member_count <= 25:
         number_of_fields = 1
     elif 26 <= member_count <= 50:
@@ -178,29 +217,11 @@ async def get_application_form(
     else:
         number_of_fields = 5
 
-    unit_name_str = None
-    clergy_district_name = None
-    if current_user.unit_name_id:
-        unit_name_result = await db.execute(
-            select(UnitName)
-            .options(selectinload(UnitName.district))
-            .where(UnitName.id == current_user.unit_name_id)
-        )
-        unit_name_obj = unit_name_result.scalar_one_or_none()
-        if unit_name_obj:
-            unit_name_str = unit_name_obj.name
-            if unit_name_obj.district:
-                clergy_district_name = unit_name_obj.district.name
-
-    if not clergy_district_name and current_user.clergy_district_id:
-        district_result = await db.execute(
-            select(ClergyDistrict).where(ClergyDistrict.id == current_user.clergy_district_id)
-        )
-        district = district_result.scalar_one_or_none()
-        clergy_district_name = district.name if district else None
-
     registration_status = cycle.status if cycle else "Not Started"
-    registration_year = cycle.registration_year if cycle else await cycle_service.get_current_registration_year(db)
+    registration_year = (
+        cycle.registration_year if cycle
+        else await cycle_service.get_current_registration_year(db)
+    )
     path_type = cycle.path_type if cycle else "fresh"
     is_renewal = path_type == "renewal"
     cycle_id = cycle.id if cycle else None
@@ -208,7 +229,7 @@ async def get_application_form(
     unit_details_payload = _serialize_or_none(UnitDetailsResponse, unit_details)
     if unit_details_payload is not None:
         unit_details_payload["registration_year"] = registration_year
-    
+
     return {
         "user_data": {
             "id": current_user.id,
