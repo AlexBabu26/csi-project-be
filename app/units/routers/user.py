@@ -1,6 +1,8 @@
 """Units user router - endpoints for registered unit users."""
 
 from datetime import date
+from io import BytesIO
+from pathlib import Path
 
 from app.common.datetime_utils import now_ist
 from typing import List, Optional
@@ -38,6 +40,7 @@ from app.units.models import (
     PaymentProofStatus,
 )
 from app.units import registration_cycle_service as cycle_service
+from app.units.payment_ocr import extract_amount_from_pdf_bytes
 from app.units.schemas import (
     UnitDetailsCreate,
     UnitDetailsResponse,
@@ -1314,6 +1317,8 @@ async def get_payment_status(
             "file_url": file_url,
             "total_amount": p.total_amount,
             "balance_amount": p.balance_amount,
+            "approved_paid_amount": p.approved_paid_amount,
+            "detected_paid_amount": p.detected_paid_amount,
             "status": p.status.value,
             "rejection_note": p.rejection_note,
             "submitted_at": p.submitted_at.isoformat(),
@@ -1347,6 +1352,10 @@ async def get_payment_status(
 @router.post("/payment", response_model=dict, status_code=201)
 async def submit_payment_proof(
     file: UploadFile = File(..., description="Payment proof screenshot or PDF (max 5 MB)"),
+    detected_amount: Optional[int] = Form(
+        None,
+        description="Client-detected paid amount in rupees (from browser OCR for images)",
+    ),
     current_user: CustomUser = Depends(get_current_unit_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -1354,6 +1363,9 @@ async def submit_payment_proof(
     Upload a payment proof file for the unit registration fee.
     Only one pending submission is allowed per registration cycle at a time.
     Re-uploads are allowed after the admin approves or rejects the current proof.
+
+    Images: pass detected_amount from browser Tesseract OCR when available.
+    PDFs: backend runs OCR.space when configured and file is under 1 MB.
     """
     cycle, _, _ = await cycle_service.resolve_active_cycle(db, current_user.id)
     if cycle is None or cycle.status not in (
@@ -1397,6 +1409,31 @@ async def submit_payment_proof(
             detail="A payment proof is already awaiting admin review. Please wait for approval or rejection before submitting another.",
         )
 
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    resolved_detected_amount: Optional[int] = None
+    if detected_amount is not None:
+        if detected_amount < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Detected amount cannot be negative.",
+            )
+        resolved_detected_amount = detected_amount
+    elif suffix == ".pdf":
+        resolved_detected_amount = extract_amount_from_pdf_bytes(
+            file_bytes,
+            file.filename or "payment.pdf",
+        )
+
+    file.file = BytesIO(file_bytes)
+    file.file.seek(0)
+
     # Upload file to B2
     object_key, _ = save_upload_file(file, subdir="units/registration-payments")
 
@@ -1416,6 +1453,7 @@ async def submit_payment_proof(
         registration_cycle_id=cycle.id,
         file_path=object_key,
         total_amount=total,
+        detected_paid_amount=resolved_detected_amount,
         status=PaymentProofStatus.PENDING,
     )
     db.add(payment)
@@ -1425,6 +1463,7 @@ async def submit_payment_proof(
     return {
         "id": payment.id,
         "status": payment.status.value,
+        "detected_paid_amount": payment.detected_paid_amount,
         "submitted_at": payment.submitted_at.isoformat(),
         "message": "Payment proof submitted successfully. Awaiting admin review.",
     }

@@ -413,6 +413,7 @@ class UnitRegistrationPayment(Base):
     total_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Amount at time of submission
     balance_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Remaining balance after approval
     approved_paid_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Admin-entered amount on approval
+    detected_paid_amount: Mapped[Optional[int]] = mapped_column(Integer)  # OCR-detected amount at upload
     status: Mapped[PaymentProofStatus] = mapped_column(
         Enum(PaymentProofStatus), default=PaymentProofStatus.PENDING, nullable=False
     )

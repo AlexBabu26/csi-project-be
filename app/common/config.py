@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     resend_api_key: Optional[str] = None
     admin_notification_email: Optional[str] = None
 
+    # OCR.space (optional PDF payment amount detection)
+    ocr_space_api_key: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:

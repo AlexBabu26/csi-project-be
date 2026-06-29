@@ -50,6 +50,7 @@ def test_remove_then_add_swap_keeps_zero_balance():
     """Fully paid unit: admin removes one member then approves one add — net zero owed."""
     cycle = SimpleNamespace(total_fee_at_submit=820)
     payment = _payment(1, total=820, balance=0, submitted_at=datetime(2026, 6, 1))
+    payment.approved_paid_amount = 820
     approved = [payment]
 
     cycle.total_fee_at_submit = 810
@@ -58,6 +59,35 @@ def test_remove_then_add_swap_keeps_zero_balance():
 
     cycle.total_fee_at_submit = 820
     recalculate_latest_approved_balance(cycle, approved)
+    assert payment.balance_amount == 0
+
+
+def test_vechuchira_scenario_full_proof_amount_preserved():
+    """Payment proof for 820 approved in full; swap remove+add must not create false balance."""
+    cycle = SimpleNamespace(total_fee_at_submit=820, member_count_at_submit=72)
+    payment = SimpleNamespace(
+        id=971,
+        total_amount=820,
+        balance_amount=0,
+        approved_paid_amount=820,
+        submitted_at=datetime(2026, 6, 27),
+    )
+    approved = [payment]
+
+    cycle.total_fee_at_submit = 810
+    cycle.member_count_at_submit = 71
+    recalculate_latest_approved_balance(cycle, approved)
+    summary = build_payment_summary(cycle, approved)
+    assert summary["total_paid"] == 820
+    assert summary["balance_due"] == 0
+    assert summary["payment_credit"] == 10
+
+    cycle.total_fee_at_submit = 820
+    cycle.member_count_at_submit = 72
+    recalculate_latest_approved_balance(cycle, approved)
+    summary = build_payment_summary(cycle, approved)
+    assert summary["total_paid"] == 820
+    assert summary["balance_due"] == 0
     assert payment.balance_amount == 0
 
 
