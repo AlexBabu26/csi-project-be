@@ -636,8 +636,8 @@ async def reconcile_cycle_fee_after_member_removals(
     cycle: UnitRegistrationCycle,
 ) -> bool:
     """
-    Align cycle fee snapshot with active members when admin removals lowered
-    the roster after declaration (including removals before fee sync existed).
+    Align cycle fee snapshot with the live roster after declaration when members
+    were added or removed without going through the fee-adjustment flow.
     """
     if cycle.status not in (DECLARATION_SUBMITTED, REGISTRATION_COMPLETED):
         return False
@@ -650,10 +650,10 @@ async def reconcile_cycle_fee_after_member_removals(
         .where(UnitMembers.registered_user_id == registered_user_id)
     )
     active_count = member_count_result.scalar() or 0
-    if active_count >= cycle.member_count_at_submit:
+    delta_members = active_count - cycle.member_count_at_submit
+    if delta_members == 0:
         return False
 
-    delta_members = active_count - cycle.member_count_at_submit
     return await adjust_fee_for_member_delta(
         db,
         registered_user_id=registered_user_id,
@@ -735,21 +735,30 @@ def compute_total_paid_for_approved_payments(
     """
     Sum amounts recorded as paid across approved proofs (admin-entered on approval).
 
-    Uses the outstanding balance before each proof minus its remaining balance after
-    approval. Earlier proofs in a partial-payment chain are left unchanged by member
-    fee adjustments; only the latest approved proof's balance is recalculated.
+    Uses approved_paid_amount when stored; otherwise falls back to the outstanding
+    balance before each proof minus its remaining balance after approval.
     """
     if not approved:
         return 0
 
     sorted_approved = sorted(approved, key=lambda p: p.submitted_at)
+    if all(getattr(p, "approved_paid_amount", None) is not None for p in sorted_approved):
+        return sum(p.approved_paid_amount or 0 for p in sorted_approved)
+
     total_paid = 0
     outstanding_before: Optional[int] = None
 
     for payment in sorted_approved:
+        if getattr(payment, "approved_paid_amount", None) is not None:
+            total_paid += payment.approved_paid_amount
+            outstanding_before = payment.balance_amount
+            continue
+
         if outstanding_before is None:
             outstanding_before = payment.total_amount or 0
         if payment.balance_amount is None:
+            if payment.total_amount is not None:
+                total_paid += payment.total_amount
             continue
         paid = outstanding_before - payment.balance_amount
         if paid > 0:

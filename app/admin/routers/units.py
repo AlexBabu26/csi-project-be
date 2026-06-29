@@ -1718,6 +1718,21 @@ async def approve_registration_payment(
             detail="Payment total is unknown; cannot approve with a paid amount",
         )
 
+    cycle = None
+    if payment.registration_cycle_id is not None:
+        cycle_result = await db.execute(
+            select(UnitRegistrationCycle).where(
+                UnitRegistrationCycle.id == payment.registration_cycle_id
+            )
+        )
+        cycle = cycle_result.scalar_one_or_none()
+
+    fee_owed = (
+        cycle.total_fee_at_submit
+        if cycle is not None and cycle.total_fee_at_submit is not None
+        else payment.total_amount
+    )
+
     prior_stmt = (
         select(UnitRegistrationPayment)
         .where(
@@ -1731,12 +1746,8 @@ async def approve_registration_payment(
     prior_result = await db.execute(prior_stmt)
     prior_approved = list(prior_result.scalars().all())
 
-    if prior_approved:
-        current_balance = prior_approved[-1].balance_amount
-        if current_balance is None:
-            current_balance = payment.total_amount
-    else:
-        current_balance = payment.total_amount
+    total_paid_so_far = cycle_service.compute_total_paid_for_approved_payments(prior_approved)
+    current_balance = max(0, fee_owed - total_paid_so_far)
 
     if paid_amount > current_balance:
         raise HTTPException(
@@ -1744,13 +1755,20 @@ async def approve_registration_payment(
             detail="Paid amount cannot exceed the remaining balance",
         )
 
-    balance_amount = max(0, current_balance - paid_amount)
-
     payment.status = PaymentProofStatus.APPROVED
-    payment.balance_amount = balance_amount
+    payment.approved_paid_amount = paid_amount
     payment.rejection_note = None
     payment.reviewed_at = now_ist()
     payment.reviewed_by_id = current_user.id
+
+    all_approved = prior_approved + [payment]
+    if cycle is not None:
+        cycle_service.recalculate_latest_approved_balance(cycle, all_approved)
+        balance_amount = payment.balance_amount
+    else:
+        balance_amount = max(0, current_balance - paid_amount)
+        payment.balance_amount = balance_amount
+
     await db.commit()
 
     clear_cache("admin_units_list")

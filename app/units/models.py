@@ -412,6 +412,7 @@ class UnitRegistrationPayment(Base):
     file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # B2 object key
     total_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Amount at time of submission
     balance_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Remaining balance after approval
+    approved_paid_amount: Mapped[Optional[int]] = mapped_column(Integer)  # Admin-entered amount on approval
     status: Mapped[PaymentProofStatus] = mapped_column(
         Enum(PaymentProofStatus), default=PaymentProofStatus.PENDING, nullable=False
     )

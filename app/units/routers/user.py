@@ -365,6 +365,15 @@ async def add_unit_member(
     )
     
     db.add(member)
+    if cycle.status in (
+        cycle_service.DECLARATION_SUBMITTED,
+        cycle_service.REGISTRATION_COMPLETED,
+    ):
+        await cycle_service.adjust_fee_for_member_delta(
+            db,
+            registered_user_id=current_user.id,
+            delta_members=1,
+        )
     await db.commit()
     await db.refresh(member)
     
@@ -1283,6 +1292,18 @@ async def get_payment_status(
     payments = payment_data["payments"]
 
     approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+    if approved:
+        latest = approved[-1]
+        before_balance = latest.balance_amount
+        cycle_service.recalculate_latest_approved_balance(cycle, approved)
+        if latest.balance_amount != before_balance:
+            await db.commit()
+            payment_data = await cycle_service.get_payment_status_for_cycle(
+                db, current_user.id, cycle.id
+            )
+            payments = payment_data["payments"]
+            approved = [p for p in payments if p.status == PaymentProofStatus.APPROVED]
+
     payment_summary = cycle_service.build_payment_summary(cycle, approved)
 
     items = []
@@ -1306,7 +1327,11 @@ async def get_payment_status(
 
     return {
         "overall_status": payment_data["overall_status"],
-        "balance_amount": payment_data["balance_amount"],
+        "balance_amount": (
+            payment_summary["balance_due"]
+            if approved and payment_summary["balance_due"] > 0
+            else payment_data["balance_amount"]
+        ),
         "registration_total_amount": cycle.total_fee_at_submit,
         "registration_member_count": cycle.member_count_at_submit,
         "total_paid": payment_summary["total_paid"],
