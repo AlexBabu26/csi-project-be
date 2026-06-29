@@ -22,6 +22,48 @@ DATE_PATTERN = re.compile(
     r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}\s+\w+\s+\d{4})\b",
     re.IGNORECASE,
 )
+PAID_TO_PATTERN = re.compile(r"^paid\s+to\b", re.IGNORECASE)
+
+
+def _correct_rupee_misread_amount(compact: str, value: float) -> float:
+    match = re.match(r"^2([789]\d{2}\.\d{2})$", compact)
+    if not match:
+        return value
+
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return value
+
+
+def _parse_amount_from_line(trimmed: str) -> Optional[float]:
+    if not trimmed or DATE_PATTERN.search(trimmed) or PAID_TO_PATTERN.match(trimmed):
+        return None
+
+    compact = re.sub(r"\s+", "", trimmed)
+    match = AMOUNT_PATTERN.search(compact)
+    if not match:
+        return None
+
+    raw = match.group(1).replace(",", "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+
+    if value < 1:
+        return None
+
+    has_decimal = "." in match.group(1)
+    looks_like_currency = (
+        has_decimal
+        or compact.startswith(("₹", "R"))
+        or trimmed.lower().startswith("rs")
+    )
+    if not looks_like_currency:
+        return None
+
+    return _correct_rupee_misread_amount(compact, value)
 
 
 def parse_payment_amount_from_text(text: str) -> Optional[int]:
@@ -29,37 +71,29 @@ def parse_payment_amount_from_text(text: str) -> Optional[int]:
     if not text or not text.strip():
         return None
 
-    candidates: list[tuple[float, int]] = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    before_paid_to: list[str] = []
+
+    for line in lines:
         trimmed = line.strip()
-        if not trimmed or DATE_PATTERN.search(trimmed):
-            continue
-        compact = re.sub(r"\s+", "", trimmed)
-        match = AMOUNT_PATTERN.search(compact)
-        if not match:
-            continue
-        raw = match.group(1).replace(",", "")
-        try:
-            value = float(raw)
-        except ValueError:
-            continue
-        if value < 1:
-            continue
-        has_decimal = "." in match.group(1)
-        looks_like_currency = (
-            has_decimal
-            or compact.startswith(("₹", "R"))
-            or trimmed.lower().startswith("rs")
-        )
-        if not looks_like_currency:
-            continue
-        candidates.append((value, len(trimmed)))
+        if PAID_TO_PATTERN.match(trimmed):
+            break
+        if trimmed:
+            before_paid_to.append(trimmed)
 
-    if not candidates:
-        return None
+    search_lines = before_paid_to or [line.strip() for line in lines if line.strip()]
 
-    best = max(candidates, key=lambda item: (item[0], item[1]))
-    return int(round(best[0]))
+    for line in search_lines:
+        parsed = _parse_amount_from_line(line)
+        if parsed is not None and re.search(r"\.\d{1,2}", re.sub(r"\s+", "", line)):
+            return int(round(parsed))
+
+    for line in search_lines:
+        parsed = _parse_amount_from_line(line)
+        if parsed is not None:
+            return int(round(parsed))
+
+    return None
 
 
 def extract_amount_from_pdf_bytes(

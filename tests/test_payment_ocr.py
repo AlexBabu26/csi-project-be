@@ -23,6 +23,30 @@ def test_parse_ignores_date_line():
     assert parse_payment_amount_from_text(text) is None
 
 
-def test_parse_engine1_misread_still_finds_largest_currency_like_value():
-    text = "2790.00\nPaid to\nCSI Youth Movement Ktm"
-    assert parse_payment_amount_from_text(text) == 2790
+def test_parse_dark_mode_rupee_misread_as_leading_two():
+    text = """
+2820.00
+Paid to
+CSI Youth Movement Ktm
+27 June 2024, 7:55 pm
+"""
+    assert parse_payment_amount_from_text(text) == 820
+
+
+def test_parse_keeps_four_digit_payment():
+    text = """
+2500.00
+Paid to
+Merchant Name
+"""
+    assert parse_payment_amount_from_text(text) == 2500
+
+
+def test_parse_stops_at_paid_to_and_ignores_later_numbers():
+    text = """
+820.00
+Paid to
+CSI Youth Movement
+27 June 2024, 7:55 pm
+"""
+    assert parse_payment_amount_from_text(text) == 820
