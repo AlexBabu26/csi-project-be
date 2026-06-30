@@ -6,10 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import City, Country, State
 from app.common.db import get_async_db
-from app.common.cache import get_cache, set_cache, TTL_MASTER_DATA
+from app.common.cache import clear_cache, get_cache, set_cache, TTL_MASTER_DATA
 from app.master.schemas import CityResponse, CountryResponse, StateResponse, StateSummaryResponse
 
 router = APIRouter()
+
+# Bumped after CityResponse started including country_id; drops stale v1 entries.
+_CITIES_CACHE_PREFIX = "master:cities:v2"
+clear_cache("master:cities:")
 
 
 @router.get("/countries", response_model=list[CountryResponse])
@@ -98,7 +102,7 @@ async def list_cities(
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_async_db),
 ):
-    cache_key = f"master:cities:{state_id}:{search or ''}:{limit}"
+    cache_key = f"{_CITIES_CACHE_PREFIX}:{state_id}:{search or ''}:{limit}"
     cached = get_cache(cache_key)
     if cached is not None:
         return cached
