@@ -137,3 +137,18 @@ def test_legacy_partial_proof_uses_current_fee_not_stale_total():
 
     recalculate_latest_approved_balance(cycle, approved)
     assert proof2.balance_amount == 10
+
+
+def test_single_proof_fee_increase_backfill_uses_upload_total():
+    """Single proof: unit paid upload-time fee (1110) before roster grew to 1120."""
+    cycle = SimpleNamespace(total_fee_at_submit=1120, member_count_at_submit=102)
+    proof = _payment(1, total=1110, balance=40, submitted_at=datetime(2026, 6, 28))
+    approved = [proof]
+
+    # Broken inference from balance alone
+    assert compute_total_paid_for_approved_payments(approved, fee_owed=1120) == 1080
+
+    proof.approved_paid_amount = proof.total_amount
+    summary = build_payment_summary(cycle, approved)
+    assert summary["total_paid"] == 1110
+    assert summary["balance_due"] == 10
