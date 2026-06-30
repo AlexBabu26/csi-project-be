@@ -113,6 +113,9 @@ async def list_cities(
         stmt = stmt.where(City.name.ilike(pattern))
     stmt = stmt.limit(limit)
     result = await db.execute(stmt)
-    data = [{"id": r.id, "state_id": r.state_id, "name": r.name} for r in result.scalars().all()]
+    data = [
+        {"id": r.id, "country_id": r.country_id, "state_id": r.state_id, "name": r.name}
+        for r in result.scalars().all()
+    ]
     set_cache(cache_key, data, TTL_MASTER_DATA)
     return data
