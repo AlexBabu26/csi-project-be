@@ -29,8 +29,9 @@ if sys.platform == "win32":
 
 # Test units to remove (user_id, unit_name_id, label)
 TEST_UNITS = [
-    (507, 350, "BOYCE ESTATE"),
-    (508, 205, "KOMPUKUTHY"),
+    (393, 196, "504 COLONY"),
+    (512, 350, "BOYCE ESTATE"),
+    (518, 82, "VAIKKOM"),
 ]
 
 DELETE_TABLES = [
