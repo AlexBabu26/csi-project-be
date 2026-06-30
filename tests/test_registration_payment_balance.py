@@ -120,3 +120,20 @@ def test_legit_member_add_increases_balance():
 
     recalculate_latest_approved_balance(cycle, approved)
     assert payment.balance_amount == 10
+
+
+def test_legacy_partial_proof_uses_current_fee_not_stale_total():
+    """KUMPLAMPOIKA-style: first proof lacks approved_paid_amount after fee increased."""
+    cycle = SimpleNamespace(total_fee_at_submit=1120, member_count_at_submit=102)
+    proof1 = _payment(1, total=1080, balance=40, submitted_at=datetime(2026, 6, 28))
+    proof2 = _payment(2, total=1120, balance=10, submitted_at=datetime(2026, 6, 29))
+    proof2.approved_paid_amount = 30
+    approved = [proof1, proof2]
+
+    summary = build_payment_summary(cycle, approved)
+    assert summary["total_paid"] == 1110
+    assert summary["balance_due"] == 10
+    assert summary["payment_credit"] == 0
+
+    recalculate_latest_approved_balance(cycle, approved)
+    assert proof2.balance_amount == 10

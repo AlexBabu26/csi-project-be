@@ -731,12 +731,18 @@ async def get_payments_by_cycle_ids(
 
 def compute_total_paid_for_approved_payments(
     approved: list[UnitRegistrationPayment],
+    *,
+    fee_owed: Optional[int] = None,
 ) -> int:
     """
     Sum amounts recorded as paid across approved proofs (admin-entered on approval).
 
     Uses approved_paid_amount when stored; otherwise falls back to the outstanding
     balance before each proof minus its remaining balance after approval.
+
+    When deriving amounts from balances, the first partial proof uses the current
+    cycle fee (fee_owed) rather than the proof's stale total_amount at upload time.
+    Fully settled proofs (balance 0) without approved_paid_amount use total_amount.
     """
     if not approved:
         return 0
@@ -745,6 +751,7 @@ def compute_total_paid_for_approved_payments(
     if all(getattr(p, "approved_paid_amount", None) is not None for p in sorted_approved):
         return sum(p.approved_paid_amount or 0 for p in sorted_approved)
 
+    max_proof_total = max((p.total_amount or 0 for p in sorted_approved), default=0)
     total_paid = 0
     outstanding_before: Optional[int] = None
 
@@ -755,7 +762,14 @@ def compute_total_paid_for_approved_payments(
             continue
 
         if outstanding_before is None:
-            outstanding_before = payment.total_amount or 0
+            if payment.balance_amount is not None and payment.balance_amount > 0:
+                outstanding_before = (
+                    fee_owed
+                    if fee_owed is not None
+                    else max(max_proof_total, payment.total_amount or 0)
+                )
+            else:
+                outstanding_before = payment.total_amount or 0
         if payment.balance_amount is None:
             if payment.total_amount is not None:
                 total_paid += payment.total_amount
@@ -778,7 +792,7 @@ def recalculate_latest_approved_balance(
 
     latest = max(approved, key=lambda p: p.submitted_at)
     fee_owed = cycle.total_fee_at_submit or 0
-    total_paid = compute_total_paid_for_approved_payments(approved)
+    total_paid = compute_total_paid_for_approved_payments(approved, fee_owed=fee_owed)
     latest.balance_amount = max(0, fee_owed - total_paid)
 
 
@@ -794,7 +808,7 @@ def build_payment_summary(
     """
     fee_owed = cycle.total_fee_at_submit or 0
     member_count = cycle.member_count_at_submit or 0
-    total_paid = compute_total_paid_for_approved_payments(approved)
+    total_paid = compute_total_paid_for_approved_payments(approved, fee_owed=fee_owed)
     balance_due = max(0, fee_owed - total_paid)
     payment_credit = max(0, total_paid - fee_owed)
     return {

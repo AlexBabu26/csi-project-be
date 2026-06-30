@@ -1591,6 +1591,8 @@ async def list_registration_payments(
         approved = [
             pay for pay in cycle_payments if pay.status == PaymentProofStatus.APPROVED
         ]
+        if approved:
+            cycle_service.recalculate_latest_approved_balance(cycle_row, approved)
         summary_by_cycle[cycle_id] = {
             **cycle_service.build_payment_summary(cycle_row, approved),
             "registration_member_count": cycle_row.member_count_at_submit,
@@ -1689,7 +1691,9 @@ async def approve_registration_payment(
     prior_result = await db.execute(prior_stmt)
     prior_approved = list(prior_result.scalars().all())
 
-    total_paid_so_far = cycle_service.compute_total_paid_for_approved_payments(prior_approved)
+    total_paid_so_far = cycle_service.compute_total_paid_for_approved_payments(
+        prior_approved, fee_owed=fee_owed
+    )
     current_balance = max(0, fee_owed - total_paid_so_far)
 
     if paid_amount > current_balance:
