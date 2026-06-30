@@ -1621,6 +1621,7 @@ async def list_registration_payments(
             ),
             "status": p.status.value,
             "rejection_note": p.rejection_note,
+            "approved_paid_amount": p.approved_paid_amount,
             "detected_paid_amount": p.detected_paid_amount,
             "submitted_at": p.submitted_at.isoformat(),
             "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
