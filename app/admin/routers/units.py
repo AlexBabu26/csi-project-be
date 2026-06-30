@@ -218,19 +218,49 @@ async def admin_home_page(
     pending_rows = (await db.execute(pending_union)).all()
     pending_requests_count = sum(row[0] for row in pending_rows)
     
-    # Single query for all member counts (total, male, female)
+    # Member counts across all units
     male_gender = or_(UnitMembers.gender == 'M', UnitMembers.gender == 'Male')
     female_gender = or_(UnitMembers.gender == 'F', UnitMembers.gender == 'Female')
     stmt = select(
         func.count(UnitMembers.id).label('total'),
         func.count(case((male_gender, 1))).label('male'),
         func.count(case((female_gender, 1))).label('female')
-    ).select_from(UnitMembers)
+    ).select_from(UnitMembers).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
+    ).where(
+        CustomUser.id != current_user.id,
+    )
     result = await db.execute(stmt)
     member_counts = result.one()
     unit_members_count = member_counts[0] or 0
-    unit_members_males_count = member_counts[1] or 0
-    unit_females_count = member_counts[2] or 0
+
+    # Member counts for units with completed registration or pending admin approval
+    # (excludes in-progress, not-started, and not-onboarded units for the current season)
+    reg_completed_cycle_statuses = (
+        cycle_service.REGISTRATION_COMPLETED,
+        cycle_service.DECLARATION_SUBMITTED,
+    )
+    stmt = select(
+        func.count(UnitMembers.id).label('total'),
+        func.count(case((male_gender, 1))).label('male'),
+        func.count(case((female_gender, 1))).label('female')
+    ).select_from(UnitMembers).join(
+        CustomUser, UnitMembers.registered_user_id == CustomUser.id
+    ).join(
+        UnitRegistrationCycle,
+        and_(
+            UnitRegistrationCycle.registered_user_id == CustomUser.id,
+            UnitRegistrationCycle.registration_year == current_year,
+            UnitRegistrationCycle.status.in_(reg_completed_cycle_statuses),
+        ),
+    ).where(
+        CustomUser.id != current_user.id,
+    )
+    result = await db.execute(stmt)
+    reg_completed_member_counts = result.one()
+    unit_members_reg_completed_count = reg_completed_member_counts[0] or 0
+    unit_members_males_count = reg_completed_member_counts[1] or 0
+    unit_females_count = reg_completed_member_counts[2] or 0
     
     # Single query for max member unit with unit name
     stmt = select(
@@ -268,6 +298,7 @@ async def admin_home_page(
         "pending_approval_units_count": pending_approval_units_count,
         "pending_requests": pending_requests_count,
         "total_unit_members": unit_members_count,
+        "total_unit_members_reg_completed": unit_members_reg_completed_count,
         "total_male_members": unit_members_males_count,
         "total_female_members": unit_females_count,
         "max_member_unit": max_member_unit_name,
