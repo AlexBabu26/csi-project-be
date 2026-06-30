@@ -109,7 +109,7 @@ async def admin_home_page(
     """Get admin dashboard statistics. Accessible via /home or /dashboard. Cached for 5 minutes."""
     from sqlalchemy import case, distinct, or_
     
-    cache_key = "admin_dashboard"
+    cache_key = "admin_dashboard_v2"
     
     # Check cache unless refresh is requested
     if not refresh:
@@ -1751,7 +1751,7 @@ async def approve_registration_payment(
 
     clear_cache("admin_units_list")
     clear_cache("admin_registration_payments")
-    clear_cache("admin_dashboard")
+    clear_cache("admin_dashboard_v2")
 
     return {
         "message": "Payment approved successfully",
@@ -1787,7 +1787,7 @@ async def reject_registration_payment(
 
     clear_cache("admin_units_list")
     clear_cache("admin_registration_payments")
-    clear_cache("admin_dashboard")
+    clear_cache("admin_dashboard_v2")
 
     return {"message": "Payment rejected", "id": payment_id}
 
@@ -2049,7 +2049,7 @@ async def bulk_complete_legacy_registrations(
 ):
     """Bulk-mark older-season registration cycles as completed (no admin approval)."""
     updated = await cycle_service.bulk_complete_legacy_registrations(db, dry_run=False)
-    clear_cache("admin_dashboard")
+    clear_cache("admin_dashboard_v2")
     return {
         "message": "Legacy registration cycles updated.",
         "updated_count": len(updated),
