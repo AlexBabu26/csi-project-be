@@ -450,13 +450,13 @@ async def list_not_onboarded_units(
 # Transfer Request Endpoints
 @router.get("/transfer-requests", response_model=List[UnitTransferRequestResponse])
 async def list_transfer_requests(
-    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Omit to return all."),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List transfer requests. Defaults to PENDING only."""
+    """List transfer requests. Returns all statuses when no filter is provided."""
     from app.units.models import RequestStatus as RS
-    status_filter = RS(status.upper()) if status else RS.PENDING
+    status_filter = RS(status.upper()) if status else None
     return await units_service.get_transfer_requests(db, status_filter=status_filter)
 
 
@@ -496,13 +496,13 @@ async def reject_transfer_request(
 # Member Change Request Endpoints
 @router.get("/member-change-requests", response_model=List[UnitMemberChangeRequestResponse])
 async def list_member_change_requests(
-    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Omit to return all."),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List member change requests. Defaults to PENDING only."""
+    """List member change requests. Returns all statuses when no filter is provided."""
     from app.units.models import RequestStatus as RS
-    status_filter = RS(status.upper()) if status else RS.PENDING
+    status_filter = RS(status.upper()) if status else None
     return await units_service.get_member_change_requests(db, status_filter=status_filter)
 
 
@@ -542,13 +542,13 @@ async def reject_member_change_request(
 # Officials Change Request Endpoints
 @router.get("/officials-change-requests", response_model=List[UnitOfficialsChangeRequestResponse])
 async def list_officials_change_requests(
-    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Omit to return all."),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List officials change requests. Defaults to PENDING only."""
+    """List officials change requests. Returns all statuses when no filter is provided."""
     from app.units.models import RequestStatus as RS
-    status_filter = RS(status.upper()) if status else RS.PENDING
+    status_filter = RS(status.upper()) if status else None
     return await units_service.get_officials_change_requests(db, status_filter=status_filter)
 
 
@@ -588,13 +588,13 @@ async def reject_officials_change_request(
 # Councilor Change Request Endpoints
 @router.get("/councilor-change-requests", response_model=List[UnitCouncilorChangeRequestResponse])
 async def list_councilor_change_requests(
-    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Omit to return all."),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List councilor change requests. Defaults to PENDING only."""
+    """List councilor change requests. Returns all statuses when no filter is provided."""
     from app.units.models import RequestStatus as RS
-    status_filter = RS(status.upper()) if status else RS.PENDING
+    status_filter = RS(status.upper()) if status else None
     return await units_service.get_councilor_change_requests(db, status_filter=status_filter)
 
 
@@ -679,13 +679,13 @@ async def reject_member_add_request(
 # Archived Member Concern Request Endpoints
 @router.get("/archived-member-concern-requests")
 async def list_archived_member_concern_requests(
-    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Default: PENDING"),
+    status: Optional[str] = Query(None, description="Filter by status: PENDING, APPROVED, REJECTED. Omit to return all."),
     current_user: CustomUser = Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """List archived member concern requests. Defaults to PENDING only."""
+    """List archived member concern requests. Returns all statuses when no filter is provided."""
     from app.units.models import RequestStatus as RS
-    status_filter = RS(status.upper()) if status else RS.PENDING
+    status_filter = RS(status.upper()) if status else None
     return await units_service.get_archived_member_concern_requests(db, status_filter=status_filter)
 
 
