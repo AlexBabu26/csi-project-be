@@ -19,8 +19,23 @@ from app.auth.models import (
     UnitMembers,
     UserType,
 )
-from app.units.models import UnitRegistrationCycle
+from app.units.models import UnitRegistrationCycle, UnitRegistrationPayment, PaymentProofStatus
 from app.units import registration_cycle_service as cycle_service
+
+
+def _onboarded_unit_name_ids_subquery(admin_user_id: int):
+    """UnitName IDs that have an active platform account with registration data."""
+    return (
+        select(CustomUser.unit_name_id)
+        .join(UnitRegistrationData, UnitRegistrationData.registered_user_id == CustomUser.id)
+        .where(
+            CustomUser.user_type == UserType.UNIT,
+            CustomUser.is_active.is_(True),
+            CustomUser.unit_name_id.isnot(None),
+            CustomUser.id != admin_user_id,
+        )
+        .distinct()
+    )
 
 router = APIRouter()
 
@@ -66,7 +81,7 @@ async def get_district_wise_data(
 ):
     """Get district-wise summary data including units and members count. Cached for 5 minutes."""
 
-    cache_key = "district_wise_data"
+    cache_key = "district_wise_data_v2"
     
     # Check cache unless refresh is requested
     if not refresh:
@@ -88,9 +103,19 @@ async def get_district_wise_data(
         "total_units": len(d.units),
         "registered_units": 0,
         "completed_units": 0,
+        "in_progress_units": 0,
+        "pending_approval_units": 0,
+        "not_started_units": 0,
+        "not_onboarded_units": 0,
+        "pending_payments": 0,
         "total_members": 0,
         "male_members": 0,
         "female_members": 0,
+        "reg_completed_members": 0,
+        "reg_completed_male_members": 0,
+        "reg_completed_female_members": 0,
+        "max_member_unit": "N/A",
+        "max_member_unit_count": 0,
     } for d in districts}
     
     # Registered units and current-season completed units per district
@@ -146,6 +171,137 @@ async def get_district_wise_data(
             district_data[row[0]]["total_members"] = row[1] or 0
             district_data[row[0]]["male_members"] = row[2] or 0
             district_data[row[0]]["female_members"] = row[3] or 0
+
+    in_progress_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            func.count(distinct(UnitRegistrationCycle.id)).label("in_progress"),
+        )
+        .select_from(UnitRegistrationCycle)
+        .join(CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .where(
+            UnitRegistrationCycle.registration_year == current_year,
+            UnitRegistrationCycle.status != cycle_service.REGISTRATION_COMPLETED,
+            UnitRegistrationCycle.registered_user_id != current_user.id,
+        )
+        .group_by(UnitName.clergy_district_id)
+    )
+    for row in in_progress_result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["in_progress_units"] = row[1] or 0
+
+    pending_approval_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            func.count(distinct(UnitRegistrationCycle.id)).label("pending_approval"),
+        )
+        .select_from(UnitRegistrationCycle)
+        .join(CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .where(
+            UnitRegistrationCycle.registration_year == current_year,
+            UnitRegistrationCycle.status == cycle_service.DECLARATION_SUBMITTED,
+            UnitRegistrationCycle.registered_user_id != current_user.id,
+        )
+        .group_by(UnitName.clergy_district_id)
+    )
+    for row in pending_approval_result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["pending_approval_units"] = row[1] or 0
+
+    not_onboarded_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            func.count(UnitName.id).label("not_onboarded"),
+        )
+        .select_from(UnitName)
+        .where(UnitName.id.not_in(_onboarded_unit_name_ids_subquery(current_user.id)))
+        .group_by(UnitName.clergy_district_id)
+    )
+    for row in not_onboarded_result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["not_onboarded_units"] = row[1] or 0
+
+    pending_payments_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            func.count(UnitRegistrationPayment.id).label("pending_payments"),
+        )
+        .select_from(UnitRegistrationPayment)
+        .join(
+            UnitRegistrationCycle,
+            UnitRegistrationCycle.id == UnitRegistrationPayment.registration_cycle_id,
+        )
+        .join(CustomUser, UnitRegistrationCycle.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .where(
+            UnitRegistrationPayment.status == PaymentProofStatus.PENDING,
+            UnitRegistrationCycle.registration_year == current_year,
+        )
+        .group_by(UnitName.clergy_district_id)
+    )
+    for row in pending_payments_result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["pending_payments"] = row[1] or 0
+
+    reg_completed_cycle_statuses = (
+        cycle_service.REGISTRATION_COMPLETED,
+        cycle_service.DECLARATION_SUBMITTED,
+    )
+    reg_completed_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            func.count(UnitMembers.id).label("total"),
+            func.count(case((male_gender, 1))).label("male"),
+            func.count(case((female_gender, 1))).label("female"),
+        )
+        .select_from(UnitMembers)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .join(
+            UnitRegistrationCycle,
+            and_(
+                UnitRegistrationCycle.registered_user_id == CustomUser.id,
+                UnitRegistrationCycle.registration_year == current_year,
+                UnitRegistrationCycle.status.in_(reg_completed_cycle_statuses),
+            ),
+        )
+        .where(CustomUser.id != current_user.id)
+        .group_by(UnitName.clergy_district_id)
+    )
+    for row in reg_completed_result.all():
+        if row[0] in district_data:
+            district_data[row[0]]["reg_completed_members"] = row[1] or 0
+            district_data[row[0]]["reg_completed_male_members"] = row[2] or 0
+            district_data[row[0]]["reg_completed_female_members"] = row[3] or 0
+
+    max_member_result = await db.execute(
+        select(
+            UnitName.clergy_district_id,
+            UnitName.name,
+            func.count(UnitMembers.id).label("member_count"),
+        )
+        .select_from(UnitMembers)
+        .join(CustomUser, UnitMembers.registered_user_id == CustomUser.id)
+        .join(UnitName, CustomUser.unit_name_id == UnitName.id)
+        .where(CustomUser.id != current_user.id)
+        .group_by(UnitName.clergy_district_id, UnitName.id, UnitName.name)
+        .order_by(UnitName.clergy_district_id, func.count(UnitMembers.id).desc())
+    )
+    seen_districts: set[int] = set()
+    for row in max_member_result.all():
+        district_id = row[0]
+        if district_id in district_data and district_id not in seen_districts:
+            district_data[district_id]["max_member_unit"] = row[1] or "N/A"
+            district_data[district_id]["max_member_unit_count"] = row[2] or 0
+            seen_districts.add(district_id)
+
+    for district_id, data in district_data.items():
+        registered = data["registered_units"]
+        completed = data["completed_units"]
+        in_progress = data["in_progress_units"]
+        data["not_started_units"] = max(0, registered - completed - in_progress)
     
     result_data = list(district_data.values())
     
